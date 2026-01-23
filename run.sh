@@ -23,11 +23,6 @@ if [ "$USE_LOCAL_CIRCUITS" = "true" ]; then
     popd > /dev/null
 fi
 
-# prepare environment
-export NVM_DIR="$HOME/.nvm"
-[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"
-[ -s "$HOME/.nvm/nvm.sh" ] && \. "$HOME/.nvm/nvm.sh"
-nvm install 22
 yarn install
 
 #1. start anvil (local ethereum node)

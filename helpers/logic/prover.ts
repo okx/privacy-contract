@@ -9,7 +9,7 @@ import * as path from 'path';
 // ============ CONFIGURATION ============
 const USE_RAPIDSNARK = process.env.USE_RAPIDSNARK === 'true';
 const DEBUG_TIMING = process.env.DEBUG_TIMING === 'true';
-const RAPIDSNARK_PATH = '/usr/local/bin/rapidsnark';
+const RAPIDSNARK_PATH = process.env.RAPIDSNARK_PATH || '/usr/local/bin/rapidsnark';
 
 // Cache directory for artifact files (avoid writing large files every time)
 const ARTIFACT_CACHE_DIR = path.join(os.tmpdir(), 'rapidsnark-artifacts');
