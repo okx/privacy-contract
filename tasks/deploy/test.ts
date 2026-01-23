@@ -45,6 +45,7 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const TestERC20 = await ethers.getContractFactory('TestERC20');
   const TestERC721 = await ethers.getContractFactory('TestERC721');
   const RelayAdapt = await ethers.getContractFactory('RelayAdapt');
+  const MPKRegistry = await ethers.getContractFactory('MPKRegistry');
   const Staking = await ethers.getContractFactory('Staking');
   const TreasuryImplementation = await ethers.getContractFactory('Treasury');
   const Voting = await ethers.getContractFactory('Voting');
@@ -163,8 +164,29 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const testERC20 = await TestERC20.deploy();
   await logVerify('Test ERC20', testERC20, []);
 
+  // Mint 10000 tokens to specified addresses
+  const mintAmount = ethers.utils.parseEther('10000');
+  const addressesToMint = [
+    '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+    '0x70997970c51812dc3a010c7d01b50e0d17dc79c8',
+  ];
+
+  console.log('\nMinting TestERC20 tokens...');
+  for (const address of addressesToMint) {
+    console.log(`  Minting ${ethers.utils.formatEther(mintAmount)} tokens to ${address}...`);
+    const mintTx = await testERC20.mint(address, mintAmount);
+    await mintTx.wait();
+    const balance = await testERC20.balanceOf(address);
+    console.log(`  ✅ Balance: ${ethers.utils.formatEther(balance)} tokens`);
+  }
+
   const testERC721 = await TestERC721.deploy();
   await logVerify('Test ERC721', testERC721, []);
+
+  // Deploy MPKRegistry
+  console.log('\nDeploying MPKRegistry...');
+  const mpkRegistry = await MPKRegistry.deploy();
+  await logVerify('MPKRegistry', mpkRegistry, []);
 
   const deployConfig = {
     delegator: delegator.address,
@@ -184,6 +206,7 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
     relayAdapt: relayAdapt.address,
     poseidonT3: poseidonT3.address,
     poseidonT4: poseidonT4.address,
+    mpkRegistry: mpkRegistry.address,
   };
 
   console.log('\nDEPLOY CONFIG:');
@@ -193,4 +216,9 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const configPath = path.join(__dirname, '../../deployments.json');
   fs.writeFileSync(configPath, JSON.stringify(deployConfig, null, 2));
   console.log(`\n✅ Deployment config saved to: ${configPath}`);
+
+  // Copy deployments.json to demo-ui directory for frontend access
+  const demoUiConfigPath = path.join(__dirname, '../../demo-ui/deployments.json');
+  fs.copyFileSync(configPath, demoUiConfigPath);
+  console.log(`✅ Deployment config copied to: ${demoUiConfigPath}`);
 });

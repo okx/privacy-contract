@@ -32,4 +32,9 @@ storage-layouts
 scripts/ephemeral
 node.out
 deployments.json
+demo-ui/deployments.json
 .env
+
+# Generated/Built Files
+demo-ui/railgun-wallet-bundle.js
+demo-ui/railgun-wallet-bundle.js.map

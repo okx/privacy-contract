@@ -1,0 +1,598 @@
+// Wallet Management Module
+import { CONFIG, contracts, erc20TokenInfo, loadContractConfig as loadConfig } from './config.js';
+import { ensureEthers, getMetaMaskProvider, storage } from './utils.js';
+import { toast } from '../components/toast.js';
+import * as UI from './ui.js';
+
+// Wallet State (encapsulated)
+class WalletState {
+  constructor() {
+    this.provider = null;
+    this.signer = null;
+    this.account = null;
+    this.chainId = null;
+    this.publicBalance = '0.00';
+    this.privateBalance = '0.00';
+    this.mpk = null;
+    this.isRegistered = false;
+    this.transactions = [];
+    this.railgunWallet = null;
+    this.isConnecting = false;
+    this.derivedKeys = {
+      spendingKey: null,
+      viewingKey: null,
+      viewingPublicKey: null
+    };
+  }
+
+  reset() {
+    this.provider = null;
+    this.signer = null;
+    this.account = null;
+    this.chainId = null;
+    this.publicBalance = '0.00';
+    this.privateBalance = '0.00';
+    this.mpk = null;
+    this.isRegistered = false;
+    this.railgunWallet = null;
+  }
+}
+
+export const state = new WalletState();
+
+// Initialize RailgunWalletBrowser
+async function initializeRailgunWallet() {
+  const { RailgunWalletBrowser } = window.RailgunWallet;
+  state.railgunWallet = new RailgunWalletBrowser();
+  
+  const providerAdapter = {
+    getNetwork: async () => ({ chainId: state.chainId }),
+    getTransactionReceipt: async (txHash) => {
+      const receipt = await state.provider.getTransactionReceipt(txHash);
+      return {
+        blockNumber: receipt.blockNumber,
+        blockHash: receipt.blockHash,
+        transactionHash: receipt.transactionHash || receipt.hash || txHash,
+        hash: receipt.transactionHash || receipt.hash || txHash,
+        logs: receipt.logs
+      };
+    }
+  };
+  
+  const contractAdapter = {
+    address: contracts.railgun,
+    interface: {
+      parseLog: (log) => {
+        const ethersLib = ensureEthers();
+        const iface = new ethersLib.utils.Interface(CONFIG.RAILGUN_ABI);
+        return iface.parseLog(log);
+      }
+    }
+  };
+  
+  await state.railgunWallet.initialize(providerAdapter, contractAdapter);
+  state.railgunWallet.setCurrentAccount(state.account);
+}
+
+// Chain switching
+async function switchToTargetChain(provider) {
+  const currentChainIdHex = await provider.request({ method: 'eth_chainId' });
+  const currentChainId = parseInt(currentChainIdHex, 16);
+  
+  if (currentChainId === CONFIG.TARGET_CHAIN.chainId) {
+    return;
+  }
+  
+  const targetChainIdHex = '0x' + CONFIG.TARGET_CHAIN.chainId.toString(16);
+  
+  try {
+    await provider.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: targetChainIdHex }]
+    });
+  } catch (switchError) {
+    if (switchError.code === 4902) {
+      try {
+        await provider.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: targetChainIdHex,
+            chainName: CONFIG.TARGET_CHAIN.chainName,
+            nativeCurrency: CONFIG.TARGET_CHAIN.nativeCurrency,
+            rpcUrls: [CONFIG.TARGET_CHAIN.rpcUrl],
+            blockExplorerUrls: CONFIG.TARGET_CHAIN.blockExplorerUrl ? [CONFIG.TARGET_CHAIN.blockExplorerUrl] : []
+          }]
+        });
+      } catch (addError) {
+        if (addError.code !== 4001) {
+          console.warn('Failed to add chain:', addError.message);
+        }
+      }
+    } else if (switchError.code !== 4001) {
+      console.warn('Chain switch failed:', switchError.message);
+    }
+  }
+}
+
+// Load ERC20 token info
+export async function loadERC20TokenInfo() {
+  if (contracts.testERC20 && contracts.testERC20 !== '0x0000000000000000000000000000000000000000') {
+    erc20TokenInfo.address = contracts.testERC20;
+    UI.updateERC20TokenDisplay();
+  }
+  
+  if (!state.provider || !contracts.testERC20 || contracts.testERC20 === '0x0000000000000000000000000000000000000000') {
+    return;
+  }
+  
+  const ethersLib = ensureEthers();
+  
+  try {
+    const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
+    
+    try {
+      erc20TokenInfo.symbol = await erc20.symbol();
+    } catch (e) {
+      // Use default
+    }
+    
+    try {
+      erc20TokenInfo.name = await erc20.name();
+    } catch (e) {
+      // Use default
+    }
+    
+    try {
+      erc20TokenInfo.decimals = await erc20.decimals();
+    } catch (e) {
+      // Use default
+    }
+    
+    UI.updateERC20TokenDisplay();
+  } catch (error) {
+    console.warn('Failed to load ERC20 token info:', error.message);
+  }
+}
+
+// Connect wallet
+export async function connectWallet() {
+  if (state.isConnecting) return;
+  state.isConnecting = true;
+  
+  try {
+    if (!window.ethereum) {
+      // toast.error('Please install MetaMask extension from https://metamask.io', 'MetaMask Not Found');
+      console.error('MetaMask Not Found: Please install MetaMask extension');
+      return;
+    }
+    
+    const provider = getMetaMaskProvider();
+    if (!provider) {
+      // toast.error('Could not detect MetaMask provider', 'Connection Error');
+      console.error('Connection Error: Could not detect MetaMask provider');
+      return;
+    }
+    
+    const existingAccounts = await provider.request({ method: 'eth_accounts' });
+    const accounts = existingAccounts?.length > 0 
+      ? existingAccounts 
+      : await provider.request({ method: 'eth_requestAccounts' });
+
+    const ethersLib = ensureEthers();
+    state.provider = new ethersLib.providers.Web3Provider(provider);
+    state.signer = state.provider.getSigner();
+    state.account = accounts[0];
+    
+    await switchToTargetChain(provider);
+    state.chainId = (await state.provider.getNetwork()).chainId;
+
+    await loadERC20TokenInfo();
+    
+    // Wait for RailgunWallet
+    await new Promise((resolve) => {
+      if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
+        resolve();
+      } else {
+        const check = setInterval(() => {
+          if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 100);
+      }
+    });
+    
+    await initializeRailgunWallet();
+    loadTransactions();
+    await generateMPK();
+    await refreshBalances();
+    updateUI();
+    
+    // Trigger MPK lookup if on transfer tab after connecting
+    retriggerTransferLookup();
+    
+    // toast.success(`Connected to ${state.account.slice(0, 6)}...${state.account.slice(-4)}`, 'Wallet Connected');
+    console.log('Wallet Connected:', state.account);
+    
+  } catch (error) {
+    console.error('Connection error:', error);
+    
+    if (error.code === 4001) {
+      // toast.warning('Connection rejected. Please approve in MetaMask.', 'Connection Rejected');
+      console.warn('Connection Rejected:', error.message);
+    } else if (error.code === -32002) {
+      // toast.info('A connection request is pending. Check MetaMask icon.', 'Pending Request');
+      console.info('Pending Request:', error.message);
+    } else {
+      // toast.error(error.message, 'Connection Failed');
+      console.error('Connection Failed:', error.message);
+    }
+  } finally {
+    state.isConnecting = false;
+  }
+}
+
+// Refresh balances (with race condition fix)
+export async function refreshBalances() {
+  if (!state.provider || !state.account) {
+    return;
+  }
+
+  if (!contracts.testERC20 || contracts.testERC20 === '0x0000000000000000000000000000000000000000') {
+    return;
+  }
+
+  const ethersLib = ensureEthers();
+  const currentAccount = state.account;  // Save current account to detect changes
+  
+  try {
+    const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
+    const balance = await erc20.balanceOf(currentAccount);
+    const decimals = erc20TokenInfo.decimals || 18;
+    const formattedBalance = ethersLib.utils.formatUnits(balance, decimals);
+    
+    // Check if account changed during async operation
+    if (currentAccount !== state.account) {
+      console.log('Account changed during balance refresh, ignoring stale data');
+      return;
+    }
+    
+    state.publicBalance = parseFloat(formattedBalance).toFixed(2);
+    
+    // Get private balance
+    if (state.railgunWallet) {
+      const privateBalance = await state.railgunWallet.getBalance(
+        currentAccount,
+        contracts.testERC20,
+        0 // TokenType.ERC20
+      );
+      
+      // Check again before updating
+      if (currentAccount !== state.account) {
+        return;
+      }
+      
+      state.privateBalance = parseFloat(ethersLib.utils.formatEther(privateBalance)).toFixed(2);
+    } else if (!state.privateBalance) {
+      state.privateBalance = '0.00';
+    }
+    
+    updateUI();
+  } catch (error) {
+    console.warn('Failed to refresh balances:', error.message);
+  }
+}
+
+// Generate MPK
+async function generateMPK() {
+  const ethersLib = ensureEthers();
+  
+  const savedKeys = await state.railgunWallet.loadKeys(state.account);
+  
+  let keys;
+  if (savedKeys && savedKeys.spendingKey && savedKeys.viewingKey) {
+    keys = {
+      spendingKey: savedKeys.spendingKey,
+      viewingKey: savedKeys.viewingKey,
+    };
+  } else {
+    const signature = await state.signer.signMessage('Railgun Spendingkey');
+    keys = await state.railgunWallet.generateKeys(state.account, signature);
+  }
+  
+  state.derivedKeys.viewingPublicKey = await state.railgunWallet.getViewingPublicKey(keys.viewingKey);
+  const mpkBytes = await state.railgunWallet.getMPK(keys.spendingKey, keys.viewingKey);
+  state.mpk = ethersLib.utils.hexlify(mpkBytes);
+  
+  const spendingKeyArray = ethersLib.utils.arrayify('0x' + keys.spendingKey);
+  const viewingKeyArray = ethersLib.utils.arrayify('0x' + keys.viewingKey);
+  
+  state.derivedKeys.spendingKey = spendingKeyArray;
+  state.derivedKeys.viewingKey = viewingKeyArray;
+  
+  await checkRegistrationStatus();
+  updateUI();
+}
+
+// Check registration status
+async function checkRegistrationStatus() {
+  if (!state.provider || !state.account || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
+    state.isRegistered = false;
+    return;
+  }
+
+  try {
+    const registry = new ethers.Contract(contracts.mpkRegistry, CONFIG.MPK_REGISTRY_ABI, state.provider);
+    const userInfo = await registry.getUserInfo(state.account);
+    
+    state.isRegistered = userInfo.mpk !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+  } catch (error) {
+    console.warn('Failed to check registration status:', error);
+    state.isRegistered = false;
+  }
+}
+
+// Register MPK
+export async function registerMPK() {
+  if (!state.signer || !state.account) {
+    // toast.warning('Please connect your wallet first', 'Not Connected');
+    console.warn('Not Connected: Please connect your wallet first');
+    return;
+  }
+
+  if (!state.mpk || !state.derivedKeys.viewingPublicKey) {
+    // toast.warning('MPK not generated. Please wait for MPK generation to complete.', 'MPK Not Ready');
+    console.warn('MPK Not Ready: MPK not generated');
+    return;
+  }
+
+  if (contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
+    // toast.error('MPKRegistry contract not deployed!', 'Contract Not Found');
+    console.error('Contract Not Found: MPKRegistry contract not deployed');
+    return;
+  }
+
+  const ethersLib = ensureEthers();
+  UI.setButtonLoading('.register-btn', true, 'Registering...');
+
+  try {
+    const registry = new ethersLib.Contract(contracts.mpkRegistry, CONFIG.MPK_REGISTRY_ABI, state.signer);
+    const viewingPublicKeyBytes32 = ethersLib.utils.hexZeroPad(
+      ethersLib.utils.hexlify(state.derivedKeys.viewingPublicKey), 
+      32
+    );
+    
+    const tx = await registry.register(state.mpk, viewingPublicKeyBytes32);
+    // toast.txPending(tx.hash, 'Registering MPK on-chain...');
+    
+    await tx.wait();
+    
+    if (state.railgunWallet) {
+      await state.railgunWallet.registerAccount(state.account);
+    }
+
+    state.isRegistered = true;
+    updateUI();
+    
+    // toast.txSuccess('MPK registered successfully!');
+  } catch (error) {
+    console.error('Registration failed:', error);
+    // toast.txFailed(error);
+  } finally {
+    UI.setButtonLoading('.register-btn', false);
+  }
+}
+
+// Lookup MPK
+export async function lookupMPK(address) {
+  const ethersLib = ensureEthers();
+  if (!address || !ethersLib.utils.isAddress(address)) {
+    return null;
+  }
+
+  if (!state.provider || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
+    return null;
+  }
+
+  try {
+    const registry = new ethersLib.Contract(contracts.mpkRegistry, CONFIG.MPK_REGISTRY_ABI, state.provider);
+    const userInfo = await registry.getUserInfo(address);
+    
+    const zeroMPK = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    if (userInfo.mpk === zeroMPK) {
+      return null;
+    }
+
+    const viewingPublicKeyStr = typeof userInfo.viewingPublicKey === 'string' 
+      ? userInfo.viewingPublicKey 
+      : ethersLib.utils.hexlify(userInfo.viewingPublicKey);
+
+    return {
+      mpk: userInfo.mpk,
+      viewingPublicKey: viewingPublicKeyStr
+    };
+  } catch (error) {
+    console.error('Failed to lookup MPK:', error);
+    return null;
+  }
+}
+
+// Transaction management
+function loadTransactions() {
+  const saved = storage.get('railgun-transactions', []);
+  if (state.account) {
+    state.transactions = saved.filter(tx => 
+      !tx.account || tx.account.toLowerCase() === state.account.toLowerCase()
+    );
+  } else {
+    state.transactions = saved;
+  }
+  UI.updateTransactionHistory(state.transactions);
+}
+
+function saveTransactions() {
+  const allTxs = storage.get('railgun-transactions', []);
+  
+  state.transactions.forEach(stateTx => {
+    const index = allTxs.findIndex(tx => tx.txHash === stateTx.txHash);
+    if (index !== -1) {
+      allTxs[index] = stateTx;
+    } else {
+      allTxs.unshift(stateTx);
+    }
+  });
+  
+  // Keep only last 100 transactions
+  if (allTxs.length > 100) {
+    allTxs.splice(100);
+  }
+  
+  storage.set('railgun-transactions', allTxs);
+}
+
+export function addTransaction(type, title, description, amount, txHash = null, status = 'success') {
+  const icons = {
+    shield: '🛡️',
+    unshield: '📤',
+    transfer: '🔄'
+  };
+
+  state.transactions.unshift({
+    type,
+    icon: icons[type] || '📝',
+    title,
+    description,
+    amount,
+    txHash,
+    status,
+    time: 'Just now',
+    timestamp: Date.now(),
+    account: state.account
+  });
+
+  if (state.transactions.length > 50) {
+    state.transactions = state.transactions.slice(0, 50);
+  }
+
+  UI.updateTransactionHistory(state.transactions);
+  saveTransactions();
+}
+
+export function updateTransactionStatus(txHash, status, title = null, description = null) {
+  const txIndex = state.transactions.findIndex(tx => tx.txHash === txHash);
+  if (txIndex !== -1) {
+    state.transactions[txIndex].status = status;
+    if (title) state.transactions[txIndex].title = title;
+    if (description) state.transactions[txIndex].description = description;
+    saveTransactions();
+    UI.updateTransactionHistory(state.transactions);
+  }
+}
+
+// UI update wrapper
+function updateUI() {
+  UI.updateConnectButton(state);
+  UI.updateBalances(state);
+  UI.updateAccountInfo(state);
+  UI.updateMPKDisplay(state, state.derivedKeys);
+  UI.updateTransactionHistory(state.transactions);
+  
+  // Update Shield MPK lookup for current user
+  if (state.account) {
+    handleShieldLookup(state.account);
+  }
+}
+
+// MPK Lookup handlers
+async function handleShieldLookup(address) {
+  if (!address) {
+    UI.updateShieldLookup(null, null, null);
+    return;
+  }
+  
+  const userInfo = await lookupMPK(address);
+  if (userInfo) {
+    UI.updateShieldLookup(userInfo.mpk, userInfo.viewingPublicKey, true);
+  } else {
+    UI.updateShieldLookup(null, null, false);
+  }
+}
+
+export async function handleTransferLookup(address) {
+  // If address is empty, reset UI
+  if (!address) {
+    UI.updateTransferLookup(null, null, null);
+    return;
+  }
+  
+  const ethersLib = ensureEthers();
+  
+  // Validate address format before lookup
+  if (!ethersLib.utils.isAddress(address)) {
+    // Invalid format - don't show error, just wait for user to finish typing
+    // Only show error if it looks complete but invalid
+    if (address.length >= 42) {
+      UI.updateTransferLookup(null, null, 'invalid');
+    }
+    return;
+  }
+  
+  // Valid address format - trigger lookup
+  console.log('Looking up MPK for:', address);
+  const userInfo = await lookupMPK(address);
+  if (userInfo) {
+    UI.updateTransferLookup(userInfo.mpk, userInfo.viewingPublicKey, true);
+  } else {
+    UI.updateTransferLookup(null, null, false);
+  }
+}
+
+// Helper: Re-trigger transfer lookup if on transfer tab
+function retriggerTransferLookup() {
+  // Check if currently on transfer tab
+  const transferPanel = document.getElementById('transfer-panel');
+  if (transferPanel && transferPanel.classList.contains('active')) {
+    const transferAddressInput = document.querySelector('#transfer-panel .form-input');
+    if (transferAddressInput) {
+      const address = transferAddressInput.value.trim();
+      // Only lookup if address exists and has valid format
+      if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
+        console.log('Re-triggering MPK lookup after account change');
+        handleTransferLookup(address);
+      }
+    }
+  }
+}
+
+// Setup event listeners for account/chain changes
+export function setupProviderListeners() {
+  const provider = getMetaMaskProvider();
+  if (!provider) return;
+  
+  provider.on('accountsChanged', (accounts) => {
+    if (accounts.length === 0) {
+      state.reset();
+      state.transactions = [];
+      updateUI();
+      // toast.info('Wallet disconnected', 'Disconnected');
+      console.info('Wallet disconnected');
+    } else {
+      state.publicBalance = '0.00';
+      state.privateBalance = '0.00';
+      connectWallet();
+    }
+  });
+
+  provider.on('chainChanged', (chainIdHex) => {
+    const chainId = parseInt(chainIdHex, 16);
+    state.chainId = chainId;
+    connectWallet();
+  });
+}
+
+// Export helper for external use
+export { retriggerTransferLookup };
+
+// Export state and key functions
+export { state as walletState };
+export const loadContractConfig = loadConfig;

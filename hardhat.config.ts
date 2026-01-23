@@ -14,6 +14,27 @@ import mocharc from './.mocharc.json';
 
 const config: HardhatUserConfig = {
   defaultNetwork: 'hardhat',
+  networks: {
+    hardhat: {
+      // Allow unlimited contract size for complex contracts like Railgun
+      // This helps avoid "Contract code size exceeds EIP-170 limit" errors
+      allowUnlimitedContractSize: true,
+      // Increase gas limits to handle complex operations
+      blockGasLimit: 30000000,
+      gas: 12000000,
+      // Note: EVM call stack depth is hardcoded to 1024 and cannot be changed
+      // StackOverflow errors may occur if contract calls exceed this limit
+      // This is a limitation of the EVM itself, not Hardhat
+    },
+    localhost: {
+      url: 'http://127.0.0.1:8545',
+      chainId: 31337,
+      // Same settings for localhost network (when using Hardhat node)
+      allowUnlimitedContractSize: true,
+      blockGasLimit: 30000000,
+      gas: 12000000,
+    },
+  },
   solidity: {
     compilers: [
       {
