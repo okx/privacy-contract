@@ -20,13 +20,14 @@ if [ ! -f "index.html" ]; then
     exit 1
 fi
 
-echo "🚀 Starting development server..."
+echo "🚀 Starting development server with broadcast..."
 echo ""
-echo "Available at:"
-echo "  → Local:   http://localhost:3000"
+echo "Features:"
+echo "  → Web UI at http://localhost:3000"
+echo "  → Broadcast API (transactions broadcast via server)"
 echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-# Use npx serve (no installation required)
-npx serve . -p 3000
+# Start our custom server with broadcast support
+node server.js

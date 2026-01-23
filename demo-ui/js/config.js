@@ -57,6 +57,10 @@ export const erc20TokenInfo = {
 // Load contract configuration from deployments.json
 export async function loadContractConfig() {
   try {
+    // First, check if server session changed (server restarted)
+    const { storage } = await import('./utils.js');
+    await checkServerSession(storage);
+    
     const response = await fetch('/deployments.json');
     if (response.ok) {
       const config = await response.json();
@@ -82,5 +86,42 @@ export async function loadContractConfig() {
   } catch (error) {
     console.warn('⚠️ Failed to load deployments.json:', error.message);
     return false;
+  }
+}
+
+// Check if server session changed (server restarted = clear all data)
+async function checkServerSession(storage) {
+  try {
+    const response = await fetch('/api/session');
+    if (response.ok) {
+      const { sessionId } = await response.json();
+      const savedSessionId = storage.get('railgun-server-session');
+      
+      console.log('📡 Server session check:');
+      console.log('   Current server session:', sessionId);
+      console.log('   Saved session:', savedSessionId);
+      
+      // Clear data if: no saved session (first load after restart) OR session changed
+      if (!savedSessionId || savedSessionId !== sessionId) {
+        console.log('🧹 Clearing all localStorage data (new session detected)...');
+        
+        // List all keys before clearing
+        const allKeys = Object.keys(localStorage);
+        const railgunKeys = allKeys.filter(k => k.includes('railgun'));
+        console.log('   Keys to clear:', railgunKeys);
+        
+        storage.clearAll();
+        
+        // Verify cleared
+        const remainingKeys = Object.keys(localStorage).filter(k => k.includes('railgun'));
+        console.log('   Remaining keys:', remainingKeys);
+      } else {
+        console.log('   ✅ Same session, keeping data');
+      }
+      
+      storage.set('railgun-server-session', sessionId);
+    }
+  } catch (error) {
+    console.warn('Failed to check server session:', error.message);
   }
 }

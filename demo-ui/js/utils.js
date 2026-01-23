@@ -144,6 +144,20 @@ export const storage = {
     } catch (e) {
       console.warn('Failed to cleanup localStorage', e);
     }
+  },
+
+  // Clear all railgun data (transactions, keys, etc.)
+  clearAll() {
+    try {
+      const allKeys = Object.keys(localStorage);
+      const railgunKeys = allKeys.filter(k => k.includes('railgun'));
+      railgunKeys.forEach(k => localStorage.removeItem(k));
+      console.log('🧹 Cleared all railgun localStorage data');
+      return true;
+    } catch (e) {
+      console.warn('Failed to clear localStorage', e);
+      return false;
+    }
   }
 };
 
