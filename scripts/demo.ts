@@ -74,9 +74,11 @@ async function calculateAdaptParams(
  * Interaction script - Connect to deployed contracts for testing
  * 
  * Architecture:
- * - deployer (account 0): Contract owner, governance
  * - broadcaster (account 1): Submits delegateShield and relay transactions
  * - user (account 2): End user who wants to shield/transact
+ * 
+ * Note: After deployment, all contract ownerships are transferred to governance contracts.
+ * The deployer (account 0) no longer has special permissions.
  *
  * Usage:
  * 1. Ensure hardhat node is running
@@ -128,14 +130,12 @@ async function main() {
   console.log('  PoseidonT4:', POSEIDON_T4_ADDRESS);
 
   // ========== Get accounts ==========
-  // deployer (0): owner, broadcaster (1): submits tx, user (2): end user
+  // broadcaster (1): submits tx, user (2): end user
   const signers = await ethers.getSigners();
-  const deployer = signers[0];
   const broadcaster = signers[1];
   const user = signers[2];
   
   console.log('\n=== Accounts ===');
-  console.log('Deployer:', deployer.address);
   console.log('Broadcaster:', broadcaster.address);
   console.log('User:', user.address);
 

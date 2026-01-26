@@ -35,6 +35,14 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const { ethers } = hre;
   await hre.run('compile');
 
+  // Get deployer and broadcaster accounts (used throughout deployment)
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
+  const broadcaster = signers[1];
+  console.log(`\n=== Deployment Accounts ===`);
+  console.log(`Deployer: ${deployer.address}`);
+  console.log(`Broadcaster: ${broadcaster.address}`);
+
   // Get build artifacts
   const Delegator = await ethers.getContractFactory('Delegator');
   const PoseidonT3 = await ethers.getContractFactory('PoseidonT3');
@@ -64,15 +72,15 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   // Deploy RailToken
   const rail = await RailToken.deploy('RailTest', 'RAILTEST');
   await logVerify('AdminERC20', rail, ['RailTest', 'RAILTEST']);
-  await rail.adminMint((await ethers.getSigners())[0].address, 50000000n * 10n ** 18n);
+  await rail.adminMint(deployer.address, 50000000n * 10n ** 18n);
 
   // Deploy Staking
   const staking = await Staking.deploy(rail.address);
   await logVerify('Staking', staking, [rail.address]);
 
   // Deploy delegator
-  const delegator = await Delegator.deploy((await ethers.getSigners())[0].address);
-  await logVerify('Delegator', delegator, [(await ethers.getSigners())[0].address]);
+  const delegator = await Delegator.deploy(deployer.address);
+  await logVerify('Delegator', delegator, [deployer.address]);
 
   // Deploy voting
   const voting = await Voting.deploy(staking.address, delegator.address);
@@ -83,8 +91,8 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   await logVerify('Treasury Implementation', treasuryImplementation, []);
 
   // Deploy ProxyAdmin
-  const proxyAdmin = await ProxyAdmin.deploy((await ethers.getSigners())[0].address);
-  await logVerify('Proxy Admin', proxyAdmin, [(await ethers.getSigners())[0].address]);
+  const proxyAdmin = await ProxyAdmin.deploy(deployer.address);
+  await logVerify('Proxy Admin', proxyAdmin, [deployer.address]);
 
   // Deploy treasury proxy
   const treasuryProxy = await Proxy.deploy(proxyAdmin.address);
@@ -113,7 +121,7 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const WETH9 = new ethers.ContractFactory(
     weth9artifact.abi,
     weth9artifact.bytecode,
-    (await ethers.getSigners())[0],
+    deployer,
   );
   const weth9 = await WETH9.deploy();
   await logVerify('WETH9', weth9, []);
@@ -136,13 +144,6 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   // Initialize contracts
   console.log('\nInitializing contracts');
   await (await treasury.initializeTreasury(delegator.address)).wait();
-
-  // Get deployer and broadcaster accounts
-  const signers = await ethers.getSigners();
-  const deployer = signers[0];
-  const broadcaster = signers[1];
-  console.log(`Deployer: ${deployer.address}`);
-  console.log(`Broadcaster: ${broadcaster.address}`);
 
   // Initialize RailgunSmartWallet with RelayAdapt address
   await (
