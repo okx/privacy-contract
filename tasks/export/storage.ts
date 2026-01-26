@@ -28,6 +28,8 @@ export type Types = Record<
 const defaultContractStorageExports = [
   // Logic
   'contracts/logic/RailgunSmartWallet.sol:RailgunSmartWallet',
+  // Relay
+  'contracts/adapt/Relay.sol:RelayAdapt',
   // Governance
   'contracts/treasury/Treasury.sol:Treasury',
   'contracts/treasury/GovernorRewards.sol:GovernorRewards',
