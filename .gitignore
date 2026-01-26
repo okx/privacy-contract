@@ -33,3 +33,4 @@ scripts/ephemeral
 node.out
 deployments.json
 .env
+tmp/

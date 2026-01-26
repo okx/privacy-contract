@@ -7,15 +7,25 @@ import * as path from 'path';
 
 // ============ LOCAL CIRCUIT CONFIGURATION ============
 const USE_LOCAL_CIRCUITS = process.env.USE_LOCAL_CIRCUITS === 'true';
+const RAPIDSNARK_MODE = process.env.RAPIDSNARK_MODE || 'local';
 const LOCAL_CIRCUITS_PATH = process.env.LOCAL_CIRCUITS_PATH || path.join(__dirname, '../../../circuits-v2');
 
-// Local circuit configs (same as circuitConfigs.js in circuits-v2)
-const localCircuitConfigs: ArtifactConfig[] = [];
+// Server mode only supports 02x03 circuit (from rapidsnark repo)
+const serverModeCircuitConfigs: ArtifactConfig[] = [
+  { nullifiers: 2, commitments: 3 }, // 02x03
+];
+
+// Local mode supports full circuit set (from circuits-v2)
+const localModeCircuitConfigs: ArtifactConfig[] = [];
 for (let nullifiers = 1; nullifiers <= 14; nullifiers += 1) {
   for (let commitments = 1; commitments <= 14 - nullifiers; commitments += 1) {
-    localCircuitConfigs.push({ nullifiers, commitments });
+    localModeCircuitConfigs.push({ nullifiers, commitments });
   }
 }
+
+// Select circuit configs based on rapidsnark mode
+const localCircuitConfigs: ArtifactConfig[] =
+  RAPIDSNARK_MODE === 'server' ? serverModeCircuitConfigs : localModeCircuitConfigs;
 
 /**
  * Get circuit name from nullifiers and commitments count

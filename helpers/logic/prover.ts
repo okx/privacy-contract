@@ -8,8 +8,11 @@ import * as path from 'path';
 
 // ============ CONFIGURATION ============
 const USE_RAPIDSNARK = process.env.USE_RAPIDSNARK === 'true';
+const RAPIDSNARK_MODE = process.env.RAPIDSNARK_MODE || 'local'; // 'local' or 'server'
 const DEBUG_TIMING = process.env.DEBUG_TIMING === 'true';
 const RAPIDSNARK_PATH = process.env.RAPIDSNARK_PATH || '/usr/local/bin/rapidsnark';
+const RAPIDSNARK_SERVER_URL = process.env.RAPIDSNARK_SERVER_URL || 'http://localhost:8080';
+const RAPIDSNARK_CIRCUIT = process.env.RAPIDSNARK_CIRCUIT || '02x03';
 
 // Cache directory for artifact files (avoid writing large files every time)
 const ARTIFACT_CACHE_DIR = path.join(os.tmpdir(), 'rapidsnark-artifacts');
@@ -160,15 +163,113 @@ async function proveWithSnarkjs(artifact: Artifact, inputs: unknown): Promise<Pr
 }
 
 /**
+ * Sleep utility for polling
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Generate proof using rapidsnark server (HTTP API)
+ *
+ * @param inputs - circuit inputs
+ * @param circuit - circuit name (default from env)
+ * @returns proof
+ */
+async function proveWithRapidsnarkServer(inputs: unknown, circuit: string = RAPIDSNARK_CIRCUIT): Promise<ProofBundle> {
+  const proverStart = Date.now();
+
+  // Custom replacer to handle BigInt serialization
+  const bigIntReplacer = (_key: string, value: unknown) => {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    return value;
+  };
+
+  // Step 1: Submit input to server
+  const inputResponse = await fetch(`${RAPIDSNARK_SERVER_URL}/input/${circuit}`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(inputs, bigIntReplacer),
+  });
+
+  if (!inputResponse.ok) {
+    throw new Error(`Failed to submit input to prover server: ${inputResponse.status}`);
+  }
+
+  // Step 2: Poll for status until complete
+  let status: { status: string; proof?: string; pubData?: string; error?: string };
+  do {
+    await sleep(100); // Poll every 100ms
+    const statusResponse = await fetch(`${RAPIDSNARK_SERVER_URL}/status`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+
+    if (!statusResponse.ok) {
+      throw new Error(`Failed to get status from prover server: ${statusResponse.status}`);
+    }
+
+    status = await statusResponse.json();
+  } while (status.status === 'busy');
+
+  const proverTime = Date.now() - proverStart;
+
+  if (DEBUG_TIMING) {
+    console.log(`   ⏱️  prove: rapidsnark-server=${proverTime}ms`);
+  }
+
+  // Step 3: Handle result
+  if (status.status === 'failed') {
+    throw new Error(`Prover server failed: ${status.error}`);
+  }
+
+  if (status.status === 'aborted') {
+    throw new Error('Prover server aborted');
+  }
+
+  if (status.status !== 'success' || !status.proof) {
+    throw new Error(`Unexpected prover status: ${status.status}`);
+  }
+
+  // Parse proof from response
+  const proofJson = JSON.parse(status.proof);
+
+  const proof: SnarkjsProof = {
+    pi_a: proofJson.pi_a,
+    pi_b: proofJson.pi_b,
+    pi_c: proofJson.pi_c,
+    protocol: proofJson.protocol || 'groth16',
+    curve: proofJson.curve || 'bn128',
+  };
+
+  return {
+    javascript: proof,
+    solidity: formatProof(proof),
+  };
+}
+
+/**
  * Generate proof for a circuit
- * Uses rapidsnark (C++) if USE_RAPIDSNARK=true, otherwise snarkjs (JS)
+ * Uses rapidsnark based on RAPIDSNARK_MODE:
+ *   - 'server': HTTP calls to rapidsnark prover server
+ *   - 'local': local rapidsnark CLI (default)
+ * If USE_RAPIDSNARK=false, uses snarkjs (JS)
  *
  * @param artifact - circuit artifact
  * @param inputs - circuit inputs
  * @returns proof
  */
 async function prove(artifact: Artifact, inputs: unknown): Promise<ProofBundle> {
+  console.log("USE_RAPIDSNARK", USE_RAPIDSNARK, "RAPIDSNARK_MODE", RAPIDSNARK_MODE);
   if (USE_RAPIDSNARK) {
+    if (RAPIDSNARK_MODE === 'server') {
+      return proveWithRapidsnarkServer(inputs);
+    }
     return proveWithRapidsnark(artifact, inputs);
   }
   return proveWithSnarkjs(artifact, inputs);
