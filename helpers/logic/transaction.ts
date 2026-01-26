@@ -34,7 +34,6 @@ export interface InputOutputBundle {
 }
 
 export interface BoundParams {
-  treeNumber: number;
   minGasPrice: bigint;
   unshield: UnshieldType;
   chainID: bigint;
@@ -46,6 +45,7 @@ export interface BoundParams {
 export interface PublicInputs {
   proof: SolidityProof;
   merkleRoot: Uint8Array;
+  rootIndex: number;
   nullifiers: Uint8Array[];
   commitments: Uint8Array[];
   boundParams: BoundParams;
@@ -104,7 +104,7 @@ function hashBoundParams(boundParams: BoundParams): Uint8Array {
   const encodedBytes = hexStringToArray(
     ethers.utils.defaultAbiCoder.encode(
       [
-        'tuple(uint16 treeNumber, uint48 minGasPrice, uint8 unshield, uint64 chainID, address adaptContract, bytes32 adaptParams, tuple(bytes32[4] ciphertext, bytes32 blindedSenderViewingKey, bytes32 blindedReceiverViewingKey, bytes annotationData, bytes memo)[] commitmentCiphertext) boundParams',
+        'tuple(uint72 minGasPrice, uint8 unshield, uint64 chainID, address adaptContract, bytes32 adaptParams, tuple(bytes32[4] ciphertext, bytes32 blindedSenderViewingKey, bytes32 blindedReceiverViewingKey, bytes annotationData, bytes memo)[] commitmentCiphertext) boundParams',
       ],
       [boundParams],
     ),
@@ -329,6 +329,7 @@ function padWithDummyNotes(originalBundle: InputOutputBundle, outputsLength: num
 async function formatPublicInputs(
   proof: ProofBundle,
   merkletree: MerkleTree,
+  rootIndex: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
   chainID: bigint,
@@ -340,9 +341,6 @@ async function formatPublicInputs(
 ): Promise<PublicInputs> {
   // Get Merkle Root
   const merkleRoot = merkletree.root;
-
-  // Get tree number
-  const treeNumber = merkletree.treeNumber;
 
   // Loop through each note in and get nullifier
   const nullifiers = await Promise.all(
@@ -361,10 +359,10 @@ async function formatPublicInputs(
   return {
     proof: proof.solidity,
     merkleRoot,
+    rootIndex,
     nullifiers,
     commitments,
     boundParams: {
-      treeNumber,
       minGasPrice,
       unshield,
       chainID,
@@ -409,12 +407,8 @@ async function formatCircuitInputs(
   // Get Merkle Root
   const merkleRoot = merkletree.root;
 
-  // Get tree number
-  const treeNumber = merkletree.treeNumber;
-
   // Get bound parameters hash
   const boundParamsHash = hashBoundParams({
-    treeNumber,
     minGasPrice,
     unshield,
     chainID,
@@ -496,6 +490,7 @@ async function formatCircuitInputs(
  */
 async function dummyTransact(
   merkletree: MerkleTree,
+  rootIndex: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
   chainID: bigint,
@@ -519,6 +514,7 @@ async function dummyTransact(
   return formatPublicInputs(
     dummyProof,
     merkletree,
+    rootIndex,
     minGasPrice,
     unshield,
     chainID,
@@ -546,6 +542,7 @@ async function dummyTransact(
  */
 async function transact(
   merkletree: MerkleTree,
+  rootIndex: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
   chainID: bigint,
@@ -598,6 +595,7 @@ async function transact(
   const result = await formatPublicInputs(
     proof,
     merkletree,
+    rootIndex,
     minGasPrice,
     unshield,
     chainID,

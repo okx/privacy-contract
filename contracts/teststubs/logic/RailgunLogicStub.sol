@@ -7,10 +7,6 @@ import { Commitments } from "../../logic/Commitments.sol";
 import { RailgunLogic } from "../../logic/RailgunLogic.sol";
 
 contract RailgunLogicStub is RailgunLogic {
-  function forceNewTree() external {
-    Commitments.newTree();
-  }
-
   function doubleInit(
     address payable _treasury,
     uint120 _shieldFee,
@@ -22,12 +18,14 @@ contract RailgunLogicStub is RailgunLogic {
     RailgunLogic.initializeRailgunLogic(_treasury, _shieldFee, _unshieldFee, _nftFee, _relayAdapt, _owner);
   }
 
-  function setMerkleRoot(uint256 _treeNumber, bytes32 _root, bool _setting) external {
-    Commitments.rootHistory[_treeNumber][_root] = _setting;
+  function setMerkleRoot(uint32 _rootIndex, bytes32 _root) external {
+    // For testing: set root at the specified index
+    Commitments.roots[_rootIndex] = _root;
   }
 
-  function setNullifier(uint256 _treeNumber, bytes32 _nullifier, bool _setting) external {
-    Commitments.nullifiers[_treeNumber][_nullifier] = _setting;
+  function setNullifier(bytes32 _nullifier, bool _setting) external {
+    // For testing: set nullifier status
+    Commitments.nullifiers[_nullifier] = _setting;
   }
 
   function transferTokenInStub(

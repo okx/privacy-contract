@@ -56,15 +56,6 @@ describe('Adapt/Relay', () => {
     });
     const railgunSmartWallet = await RailgunLogic.deploy();
 
-    // Initialize RailgunSmartWallet
-    await railgunSmartWallet.initializeRailgunLogic(
-      treasuryAccount.address,
-      0,
-      0,
-      0,
-      adminAccount.address,
-    );
-
     // Deploy WETH9
     const WETH9 = new ethers.ContractFactory(
       weth9artifact.abi,
@@ -73,9 +64,41 @@ describe('Adapt/Relay', () => {
     );
     const weth9 = await WETH9.deploy();
 
-    // Deploy RelayAdapt
+    // Deploy RelayAdapt Implementation
     const RelayAdapt = await ethers.getContractFactory('RelayAdapt');
-    const relayAdapt = await RelayAdapt.deploy(railgunSmartWallet.address, weth9.address);
+    const relayAdaptImpl = await RelayAdapt.deploy();
+
+    // Deploy ProxyAdmin for RelayAdapt
+    const ProxyAdmin = await ethers.getContractFactory('ProxyAdmin');
+    const proxyAdmin = await ProxyAdmin.deploy(adminAccount.address);
+    const proxyAdminAdmin = proxyAdmin.connect(adminAccount);
+
+    // Deploy RelayAdapt Proxy
+    const Proxy = await ethers.getContractFactory('PausableUpgradableProxy');
+    const relayAdaptProxy = await Proxy.deploy(proxyAdmin.address);
+    await (await proxyAdminAdmin.upgrade(relayAdaptProxy.address, relayAdaptImpl.address)).wait();
+    await (await proxyAdminAdmin.unpause(relayAdaptProxy.address)).wait();
+
+    // Get proxied RelayAdapt
+    const relayAdapt = RelayAdapt.attach(relayAdaptProxy.address);
+
+    // Initialize RailgunSmartWallet with RelayAdapt address
+    await railgunSmartWallet.initializeRailgunLogic(
+      treasuryAccount.address,
+      0,
+      0,
+      0,
+      relayAdaptProxy.address, // RelayAdapt address
+      adminAccount.address,
+    );
+
+    // Initialize RelayAdapt with RailgunSmartWallet address
+    await relayAdapt.initialize(
+      railgunSmartWallet.address,
+      weth9.address,
+      ethers.constants.AddressZero, // broadcaster (permissionless for tests)
+      adminAccount.address,          // owner
+    );
 
     // Get alternative signers
     const railgunSmartWalletSnarkBypass = railgunSmartWallet.connect(snarkBypassSigner);
@@ -96,31 +119,17 @@ describe('Adapt/Relay', () => {
         .map(() => TestERC20.deploy()),
     );
 
-    // Connect tokens to bypass signer
-    const testERC20TokensBypassSigner = testERC20Tokens.map((token) =>
-      token.connect(snarkBypassSigner),
-    );
 
     // Mint and approve for shield
-    await Promise.all(
-      testERC20Tokens.map(async (token) => {
-        await token.mint(await token.signer.getAddress(), 2n ** 128n - 1n);
-        await token.approve(railgunSmartWallet.address, 2n ** 256n - 1n);
-      }),
-    );
-    await Promise.all(
-      testERC20TokensBypassSigner.map(async (token) => {
-        await token.mint(await token.signer.getAddress(), 2n ** 128n - 1n);
-        await token.approve(railgunSmartWallet.address, 2n ** 256n - 1n);
-      }),
-    );
+    await testERC20Tokens[0].mint(primaryAccount.address, 16n * 10n ** 18n);
+    await testERC20Tokens[0].connect(primaryAccount).approve(relayAdapt.address, ethers.constants.MaxUint256);
 
     // Deploy test ERC721 and approve for shield
     const TestERC721 = await ethers.getContractFactory('TestERC721');
     const testERC721 = await TestERC721.deploy();
-    const testERC721BypassSigner = testERC721.connect(snarkBypassSigner);
-    await testERC721.setApprovalForAll(railgunSmartWallet.address, true);
-    await testERC721BypassSigner.setApprovalForAll(railgunSmartWallet.address, true);
+    // const testERC721BypassSigner = testERC721.connect(snarkBypassSigner);
+    // await testERC721.setApprovalForAll(railgunSmartWallet.address, true);
+    // await testERC721BypassSigner.setApprovalForAll(railgunSmartWallet.address, true);
 
     return {
       chainID,
@@ -135,9 +144,7 @@ describe('Adapt/Relay', () => {
       relayAdaptSnarkBypass,
       relayAdaptAdmin,
       testERC20Tokens,
-      testERC20TokensBypassSigner,
       testERC721,
-      testERC721BypassSigner,
       weth9,
     };
   }
@@ -194,6 +201,7 @@ describe('Adapt/Relay', () => {
           .map(() =>
             dummyTransact(
               merkletree,
+              0, // rootIndex = 0 (initial root)
               arrayToBigInt(randomBytes(5)),
               UnshieldType.NONE,
               chainID,
@@ -220,7 +228,11 @@ describe('Adapt/Relay', () => {
       };
 
       // Check contract and js output matches
-      expect(await relayAdapt.getAdaptParams(transactions, actionData)).to.equal(
+      expect(
+        await relayAdapt.getAdaptParams(transactions, actionData, {
+          gasLimit: 2000000n,
+        }),
+      ).to.equal(
         arrayToHexString(getAdaptParams(transactions, actionData), true),
       );
     }
@@ -689,7 +701,7 @@ describe('Adapt/Relay', () => {
   });
 
   it('Should submit relay bundle', async () => {
-    const { chainID, relayAdapt, relayAdaptSnarkBypass, railgunSmartWallet, testERC20Tokens } =
+    const { chainID, relayAdapt, relayAdaptSnarkBypass, railgunSmartWallet, testERC20Tokens, primaryAccount } =
       await loadFixture(deploy);
 
     // Deploy multicall target
@@ -708,7 +720,7 @@ describe('Adapt/Relay', () => {
       tokenSubID: 0n,
     };
 
-    // Shield tokens
+    // Shield tokens using delegateShield
     const shieldNotes = new Array(16)
       .fill(1)
       .map(
@@ -723,12 +735,90 @@ describe('Adapt/Relay', () => {
           ),
       );
 
-    const depositTX = await railgunSmartWallet.shield(
-      await Promise.all(shieldNotes.map((note) => note.encryptForShield())),
+    const shieldRequests = await Promise.all(shieldNotes.map((note) => note.encryptForShield()));
+
+    // Prepare EIP-712 domain
+    const network = await ethers.provider.getNetwork();
+    const domain = {
+      name: 'RelayAdapt',
+      version: '1',
+      chainId: network.chainId,
+      verifyingContract: relayAdapt.address,
+    };
+
+    const DELEGATE_SHIELD_TYPES = {
+      DelegateShield: [
+        { name: 'npk', type: 'bytes32' },
+        { name: 'tokenAddress', type: 'address' },
+        { name: 'tokenType', type: 'uint8' },
+        { name: 'tokenSubID', type: 'uint256' },
+        { name: 'value', type: 'uint120' },
+        { name: 'encryptedBundle0', type: 'bytes32' },
+        { name: 'encryptedBundle1', type: 'bytes32' },
+        { name: 'encryptedBundle2', type: 'bytes32' },
+        { name: 'shieldKey', type: 'bytes32' },
+        { name: 'from', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+      ],
+    };
+
+    // Get user's nonce
+    const userNonce = await relayAdapt.nonces(primaryAccount.address);
+    const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+
+    // Prepare DelegateShieldRequests and signatures
+    const delegateShieldRequests = [];
+    const signatures = [];
+
+    for (let i = 0; i < shieldRequests.length; i++) {
+      const shieldReq = shieldRequests[i];
+      const nonce = userNonce.add(i);
+
+      // Prepare message for signing
+      // Note: ethers.js _signTypedData can handle Uint8Array for bytes32 fields automatically
+      // We use the same format as demo.ts for consistency
+      const message = {
+        npk: shieldReq.preimage.npk,
+        tokenAddress: shieldReq.preimage.token.tokenAddress,
+        tokenType: shieldReq.preimage.token.tokenType,
+        tokenSubID: shieldReq.preimage.token.tokenSubID,
+        value: shieldReq.preimage.value,
+        encryptedBundle0: shieldReq.ciphertext.encryptedBundle[0],
+        encryptedBundle1: shieldReq.ciphertext.encryptedBundle[1],
+        encryptedBundle2: shieldReq.ciphertext.encryptedBundle[2],
+        shieldKey: shieldReq.ciphertext.shieldKey,
+        from: primaryAccount.address,
+        nonce: nonce,
+        deadline: deadline,
+      };
+
+      // User signs the message
+      const signature = await primaryAccount._signTypedData(domain, DELEGATE_SHIELD_TYPES, message);
+      signatures.push(signature);
+
+      // Prepare DelegateShieldRequest struct
+      delegateShieldRequests.push({
+        shieldRequest: shieldReq,
+        from: primaryAccount.address,
+        nonce: nonce,
+        deadline: deadline,
+      });
+    }
+
+    // Use relayAdaptSnarkBypass to simulate broadcaster role
+    // relayAdaptSnarkBypass uses VERIFICATION_BYPASS address (0x0000...dEaD) which allows
+    // bypassing SNARK proof verification for testing purposes
+    const depositTX = await relayAdapt.delegateShield(
+      delegateShieldRequests,
+      signatures
     );
 
     await merkletree.scanTX(depositTX, railgunSmartWallet);
     await wallet.scanTX(depositTX, railgunSmartWallet);
+
+    // Get current root index after shield
+    const currentRootIndex = await railgunSmartWallet.getCurrentRootIndex();
 
     // Generate transaction bundle and actions
     const notesInOut = await wallet.getTestTransactionInputs(
@@ -759,6 +849,7 @@ describe('Adapt/Relay', () => {
     const transactionsWrongAdaptID = [
       await dummyTransact(
         merkletree,
+        currentRootIndex, // Use current root index after shield
         0n,
         UnshieldType.NONE,
         chainID,
@@ -769,7 +860,7 @@ describe('Adapt/Relay', () => {
       ),
     ];
 
-    const transactions = await transactWithAdaptParams(merkletree, actionData, [
+    const transactions = await transactWithAdaptParams(merkletree, currentRootIndex, actionData, [ // Use current root index after shield
       {
         minGasPrice: 0n,
         unshield: UnshieldType.NONE,
@@ -799,6 +890,9 @@ describe('Adapt/Relay', () => {
     await merkletree.scanTX(relayTX, railgunSmartWallet);
     await wallet.scanTX(relayTX, railgunSmartWallet);
 
+    // Get current root index after relay transaction
+    const currentRootIndexAfterRelay = await railgunSmartWallet.getCurrentRootIndex();
+
     // Verification bypass address shouldn't revert
     // Generate transaction bundle and actions
     const notesInOutSnarkBypass = await wallet.getTestTransactionInputs(
@@ -817,10 +911,11 @@ describe('Adapt/Relay', () => {
       minGasLimit: 0n,
       calls: [],
     };
-
+    
     const transactionsSnarkBypass = [
       await dummyTransact(
         merkletree,
+        currentRootIndexAfterRelay, // Use current root index after relay
         0n,
         UnshieldType.NONE,
         chainID,

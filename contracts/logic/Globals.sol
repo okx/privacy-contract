@@ -48,7 +48,6 @@ enum UnshieldType {
 }
 
 struct BoundParams {
-  uint16 treeNumber;
   uint72 minGasPrice; // Only for type 0 transactions
   UnshieldType unshield;
   uint64 chainID;
@@ -62,6 +61,7 @@ struct BoundParams {
 struct Transaction {
   SnarkProof proof;
   bytes32 merkleRoot;
+  uint32 rootIndex; // Required root index for O(1) lookup (0-599, must be in valid window)
   bytes32[] nullifiers;
   bytes32[] commitments;
   BoundParams boundParams;

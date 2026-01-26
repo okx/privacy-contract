@@ -45,14 +45,11 @@ contract RailgunSmartWallet is RailgunLogic {
       shieldCiphertext[notesIter] = _shieldRequests[notesIter].ciphertext;
     }
 
-    // Get insertion parameters
-    (
-      uint256 insertionTreeNumber,
-      uint256 insertionStartIndex
-    ) = getInsertionTreeNumberAndStartingIndex(commitments.length);
+    // Get insertion start index
+    uint256 insertionStartIndex = Commitments.getStartingIndex(commitments.length);
 
     // Emit Shield events (for wallets) for the commitments
-    emit Shield(insertionTreeNumber, insertionStartIndex, commitments, shieldCiphertext, fees);
+    emit Shield(insertionStartIndex, commitments, shieldCiphertext, fees);
 
     // Push new commitments to merkle tree
     Commitments.insertLeaves(insertionLeaves);
@@ -112,15 +109,12 @@ contract RailgunSmartWallet is RailgunLogic {
       }
     }
 
-    // Get insertion parameters
-    (
-      uint256 insertionTreeNumber,
-      uint256 insertionStartIndex
-    ) = getInsertionTreeNumberAndStartingIndex(commitments.length);
+    // Get insertion start index
+    uint256 insertionStartIndex = Commitments.getStartingIndex(commitments.length);
 
     // Emit commitment state update
     if (commitments.length > 0) {
-      emit Transact(insertionTreeNumber, insertionStartIndex, commitments, ciphertext);
+      emit Transact(insertionStartIndex, commitments, ciphertext);
     }
 
     // Push commitments to tree after events due to insertLeaves causing side effects

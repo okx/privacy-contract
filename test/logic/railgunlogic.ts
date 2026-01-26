@@ -6,6 +6,8 @@ import {
   impersonateAccount,
 } from '@nomicfoundation/hardhat-network-helpers';
 
+import * as weth9artifact from '../../externalArtifacts/WETH9.json';
+
 import {
   ciphertextMatcher,
   commitmentPreimageMatcher,
@@ -64,12 +66,43 @@ describe('Logic/RailgunLogic', () => {
     railgunLogic = railgunLogic.attach(proxy.address);
     await proxy.unpause();
 
+    // Deploy WETH9 (needed for RelayAdapt)
+    const WETH9 = new ethers.ContractFactory(
+      weth9artifact.abi,
+      weth9artifact.bytecode,
+      (await ethers.getSigners())[0],
+    );
+    const weth9 = await WETH9.deploy();
+
+    // Deploy RelayAdapt Implementation
+    const RelayAdapt = await ethers.getContractFactory('RelayAdapt');
+    const relayAdaptImpl = await RelayAdapt.deploy();
+
+    // Deploy RelayAdapt Proxy
+    const relayAdaptProxy = await Proxy.deploy(proxyAdminAccount.address);
+    const relayAdaptProxyConnected = relayAdaptProxy.connect(proxyAdminAccount);
+    await relayAdaptProxyConnected.upgrade(relayAdaptImpl.address);
+    await relayAdaptProxyConnected.unpause();
+
+    // Get proxied RelayAdapt (for later initialization)
+    const relayAdapt = RelayAdapt.attach(relayAdaptProxy.address);
+
     await railgunLogic.initializeRailgunLogic(
       treasuryAccount.address,
       40,
       30,
       25,
+      relayAdaptProxy.address, // Use RelayAdapt proxy address
       adminAccount.address,
+    );
+
+    // Initialize RelayAdapt with RailgunSmartWallet address
+    // broadcaster is set to address(0) for permissionless mode in tests
+    await relayAdapt.initialize(
+      proxy.address,          // RailgunSmartWallet proxy
+      weth9.address,          // WETH
+      ethers.constants.AddressZero, // broadcaster (permissionless for tests)
+      adminAccount.address,   // owner
     );
 
     // Get alternative signers
@@ -133,8 +166,11 @@ describe('Logic/RailgunLogic', () => {
   it("Shouldn't initialize twice", async () => {
     const { adminAccount, treasuryAccount, railgunLogic } = await loadFixture(deploy);
 
+    // Get relayAdapt address from already initialized contract
+    const relayAdaptAddress = await railgunLogic.relayAdapt();
+    
     await expect(
-      railgunLogic.doubleInit(treasuryAccount.address, 25, 25, 0, adminAccount.address),
+      railgunLogic.doubleInit(treasuryAccount.address, 25, 25, 0, relayAdaptAddress, adminAccount.address),
     ).to.be.revertedWith('Initializable: contract is already initialized');
   });
 
@@ -511,6 +547,7 @@ describe('Logic/RailgunLogic', () => {
       // Get transaction
       const transaction = await dummyTransact(
         tree,
+        0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NONE,
         chainID,
@@ -523,6 +560,7 @@ describe('Logic/RailgunLogic', () => {
       // Get unshield transaction
       const unshieldTransaction = await dummyTransact(
         tree,
+        0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NORMAL,
         chainID,
@@ -580,12 +618,13 @@ describe('Logic/RailgunLogic', () => {
     const tree = await MerkleTree.createTree();
     await tree.insertLeaves(await Promise.all(notesIn.map((note) => note.getHash())), 0);
 
-    // Set merkle root on contract
-    await railgunLogic.setMerkleRoot(0, tree.root, true);
+    // Set merkle root on contract (rootIndex = 0)
+    await railgunLogic.setMerkleRoot(0, tree.root);
 
     // Create dummy transactions
     const dummyTransaction = await dummyTransact(
       tree,
+      0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.NONE,
       chainID,
@@ -597,6 +636,7 @@ describe('Logic/RailgunLogic', () => {
 
     const dummyTransactionUnshield = await dummyTransact(
       tree,
+      0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.NORMAL,
       chainID,
@@ -608,6 +648,7 @@ describe('Logic/RailgunLogic', () => {
 
     let dummyTransactionUnshieldRedirect = await dummyTransact(
       tree,
+      0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.REDIRECT,
       chainID,
@@ -659,13 +700,14 @@ describe('Logic/RailgunLogic', () => {
     ).to.deep.equal([true, '']);
 
     // Should return false if invalid merkle root
-    await railgunLogic.setMerkleRoot(0, tree.root, false);
+    // Set a different root to make it invalid
+    await railgunLogic.setMerkleRoot(0, ethers.utils.randomBytes(32));
 
     expect(
       await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
     ).to.deep.equal([false, 'Invalid Merkle Root']);
 
-    await railgunLogic.setMerkleRoot(0, tree.root, true);
+    await railgunLogic.setMerkleRoot(0, tree.root);
 
     expect(
       await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
@@ -753,6 +795,7 @@ describe('Logic/RailgunLogic', () => {
 
     dummyTransactionUnshieldRedirect = await dummyTransact(
       tree,
+      0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.REDIRECT,
       chainID,
@@ -772,6 +815,7 @@ describe('Logic/RailgunLogic', () => {
       // Generate SNARK proof
       const transaction = await transact(
         tree,
+        0, // rootIndex = 0 (initial root)
         100n,
         UnshieldType.NONE,
         chainID,
@@ -825,6 +869,7 @@ describe('Logic/RailgunLogic', () => {
       // Get transaction
       const transaction = await dummyTransact(
         tree,
+        0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NONE,
         chainID,
@@ -882,7 +927,7 @@ describe('Logic/RailgunLogic', () => {
       // Check nullifier event is emitted
       await expect(railgunLogic.accumulateAndNullifyTransactionStub(transaction, i, 0))
         .to.emit(railgunLogic, 'Nullified')
-        .withArgs(0, nullifiersMatcher(transaction.nullifiers));
+        .withArgs(nullifiersMatcher(transaction.nullifiers));
     }
   });
 

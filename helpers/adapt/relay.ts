@@ -58,12 +58,14 @@ function getAdaptParams(transactions: PublicInputs[], actionData: ActionData): U
  * Prove batch of transactions with correct adapt params field for relay adapt
  *
  * @param merkletree - merkle tree for proofs
+ * @param rootIndex - root index for O(1) lookup
  * @param actionData - actions for relay adapt to take
  * @param inputs - shared proof inputs
  * @returns proved transaction array
  */
 async function transactWithAdaptParams(
   merkletree: MerkleTree,
+  rootIndex: number,
   actionData: ActionData,
   inputs: ProverRelayAdaptNonSharedInputs[],
 ) {
@@ -72,6 +74,7 @@ async function transactWithAdaptParams(
     inputs.map((txInputs) =>
       dummyTransact(
         merkletree,
+        rootIndex,
         txInputs.minGasPrice,
         txInputs.unshield,
         txInputs.chainID,
@@ -91,6 +94,7 @@ async function transactWithAdaptParams(
     inputs.map((txInputs) =>
       transact(
         merkletree,
+        rootIndex,
         txInputs.minGasPrice,
         txInputs.unshield,
         txInputs.chainID,
