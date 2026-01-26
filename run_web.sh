@@ -74,5 +74,8 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""
 
-# Start web server (this will block)
-npx serve ./demo-ui -p 3000
+# Open browser after server starts (delayed)
+(sleep 2 && open http://localhost:3000) &
+
+# Start web server with broadcast (this will block)
+node ./demo-ui/server.js
