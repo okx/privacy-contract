@@ -9,6 +9,17 @@ import { MerkleTree } from '../helpers/logic/merkletree';
 import { transact, UnshieldType } from '../helpers/logic/transaction';
 
 /**
+ * Log gas used information from transaction receipt
+ */
+function logGasUsed(receipt: any, transactionName: string): string {
+  const gasUsed = receipt.gasUsed;
+  
+  console.log(`\n⛽ ${transactionName} Gas Used: ${gasUsed.toString()}`);
+  
+  return gasUsed.toString();
+}
+
+/**
  * Calculate adaptParams to match RelayAdapt.getAdaptParams()
  * 
  * In Solidity:
@@ -279,6 +290,7 @@ async function main() {
   const shieldReceipt = await shieldTx.wait();
   console.log('Shield transaction hash:', shieldReceipt.transactionHash);
   console.log('Shield block number:', shieldReceipt.blockNumber);
+  const shieldGasUsed = logGasUsed(shieldReceipt, 'DelegateShield');
 
   // ========== (Optional) Query Shield Events ==========
   /*
@@ -379,6 +391,7 @@ async function main() {
   const relayReceipt = await transferTx.wait();
   console.log('Relay transaction hash:', relayReceipt.transactionHash);
   console.log('Relay block number:', relayReceipt.blockNumber);
+  const transferGasUsed = logGasUsed(relayReceipt, 'Relay (Transfer)');
 
   // 2.7 Scan transfer transaction
   await merkletree.scanTX(transferTx, railgun);
@@ -453,6 +466,7 @@ async function main() {
   const unshieldReceipt = await unshieldTx.wait();
   console.log('Unshield transaction hash:', unshieldReceipt.transactionHash);
   console.log('Unshield block number:', unshieldReceipt.blockNumber);
+  const unshieldGasUsed = logGasUsed(unshieldReceipt, 'Relay (Unshield)');
 
   // 3.5 Check token balance of user
   const userFinalBalance = await testERC20.balanceOf(user.address);
