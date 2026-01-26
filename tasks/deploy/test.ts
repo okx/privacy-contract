@@ -35,6 +35,14 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const { ethers } = hre;
   await hre.run('compile');
 
+  // Get deployer and broadcaster accounts (used throughout deployment)
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
+  const broadcaster = signers[1];
+  console.log(`\n=== Deployment Accounts ===`);
+  console.log(`Deployer: ${deployer.address}`);
+  console.log(`Broadcaster: ${broadcaster.address}`);
+
   // Get build artifacts
   const Delegator = await ethers.getContractFactory('Delegator');
   const PoseidonT3 = await ethers.getContractFactory('PoseidonT3');
@@ -64,15 +72,15 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   // Deploy RailToken
   const rail = await RailToken.deploy('RailTest', 'RAILTEST');
   await logVerify('AdminERC20', rail, ['RailTest', 'RAILTEST']);
-  await rail.adminMint((await ethers.getSigners())[0].address, 50000000n * 10n ** 18n);
+  await rail.adminMint(deployer.address, 50000000n * 10n ** 18n);
 
   // Deploy Staking
   const staking = await Staking.deploy(rail.address);
   await logVerify('Staking', staking, [rail.address]);
 
   // Deploy delegator
-  const delegator = await Delegator.deploy((await ethers.getSigners())[0].address);
-  await logVerify('Delegator', delegator, [(await ethers.getSigners())[0].address]);
+  const delegator = await Delegator.deploy(deployer.address);
+  await logVerify('Delegator', delegator, [deployer.address]);
 
   // Deploy voting
   const voting = await Voting.deploy(staking.address, delegator.address);
@@ -83,8 +91,8 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   await logVerify('Treasury Implementation', treasuryImplementation, []);
 
   // Deploy ProxyAdmin
-  const proxyAdmin = await ProxyAdmin.deploy((await ethers.getSigners())[0].address);
-  await logVerify('Proxy Admin', proxyAdmin, [(await ethers.getSigners())[0].address]);
+  const proxyAdmin = await ProxyAdmin.deploy(deployer.address);
+  await logVerify('Proxy Admin', proxyAdmin, [deployer.address]);
 
   // Deploy treasury proxy
   const treasuryProxy = await Proxy.deploy(proxyAdmin.address);
@@ -109,32 +117,67 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const treasury = TreasuryImplementation.attach(treasuryProxy.address);
   const railgun = RailgunSmartWallet.attach(proxy.address);
 
+  // Deploy WETH9 (needed for RelayAdapt)
+  const WETH9 = new ethers.ContractFactory(
+    weth9artifact.abi,
+    weth9artifact.bytecode,
+    deployer,
+  );
+  const weth9 = await WETH9.deploy();
+  await logVerify('WETH9', weth9, []);
+
+  // Deploy RelayAdapt (upgradeable, needs initialize)
+  const relayAdaptImpl = await RelayAdapt.deploy();
+  await logVerify('RelayAdapt Implementation', relayAdaptImpl, []);
+
+  // Deploy RelayAdapt Proxy
+  const relayAdaptProxy = await Proxy.deploy(proxyAdmin.address);
+  await logVerify('RelayAdapt Proxy', relayAdaptProxy, [proxyAdmin.address]);
+
+  // Set RelayAdapt implementation
+  await (await proxyAdmin.upgrade(relayAdaptProxy.address, relayAdaptImpl.address)).wait();
+  await (await proxyAdmin.unpause(relayAdaptProxy.address)).wait();
+
+  // Get proxied RelayAdapt
+  const relayAdapt = RelayAdapt.attach(relayAdaptProxy.address);
+
   // Initialize contracts
   console.log('\nInitializing contracts');
   await (await treasury.initializeTreasury(delegator.address)).wait();
+
+  // Initialize RailgunSmartWallet with RelayAdapt address
   await (
     await railgun.initializeRailgunLogic(
       treasuryProxy.address,
       25n,
       25n,
       25n,
-      (
-        await ethers.getSigners()
-      )[0].address,
+      relayAdaptProxy.address, // RelayAdapt address
+      deployer.address,
       { gasLimit: 2000000 },
     )
   ).wait();
+
+  // Initialize RelayAdapt with RailgunSmartWallet address
+  // broadcaster is set to second account (separate from deployer)
+  await (
+    await relayAdapt.initialize(
+      proxy.address,          // RailgunSmartWallet proxy
+      weth9.address,          // WETH
+      broadcaster.address,    // broadcaster (second account)
+      deployer.address,       // owner (deployer)
+    )
+  ).wait();
+  console.log('RelayAdapt initialized');
 
   // Set artifacts
   console.log('\nSetting Artifacts');
   await loadArtifacts(railgun, listArtifacts());
 
   // Give deployer address full permissions
-  console.log(`\nGiving full governance permissions to ${(await ethers.getSigners())[0].address}`);
+  console.log(`\nGiving full governance permissions to ${deployer.address}`);
   await delegator.setPermission(
-    (
-      await ethers.getSigners()
-    )[0].address,
+    deployer.address,
     ethers.constants.AddressZero,
     '0x00000000',
     true,
@@ -143,21 +186,9 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   // Transfer contract ownerships
   console.log('\nTransferring ownerships');
   await (await railgun.transferOwnership(delegator.address)).wait();
+  await (await relayAdapt.transferOwnership(delegator.address)).wait();
   await (await proxyAdmin.transferOwnership(delegator.address)).wait();
   await (await delegator.transferOwnership(voting.address)).wait();
-
-  // Deploy WETH9
-  const WETH9 = new ethers.ContractFactory(
-    weth9artifact.abi,
-    weth9artifact.bytecode,
-    (await ethers.getSigners())[0],
-  );
-  const weth9 = await WETH9.deploy();
-  await logVerify('WETH9', weth9, []);
-
-  // Deploy RelayAdapt
-  const relayAdapt = await RelayAdapt.deploy(proxy.address, weth9.address);
-  await logVerify('Relay Adapt', relayAdapt, [proxy.address, weth9.address]);
 
   // Deploy test tokens
   const testERC20 = await TestERC20.deploy();
@@ -181,9 +212,11 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
     treasuryProxy: treasuryProxy.address,
     voting: voting.address,
     weth9: weth9.address,
-    relayAdapt: relayAdapt.address,
+    relayAdaptImplementation: relayAdaptImpl.address,
+    relayAdaptProxy: relayAdaptProxy.address,
     poseidonT3: poseidonT3.address,
     poseidonT4: poseidonT4.address,
+    broadcaster: broadcaster.address,
   };
 
   console.log('\nDEPLOY CONFIG:');
