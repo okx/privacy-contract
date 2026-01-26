@@ -93,9 +93,13 @@ contract RelayAdapt is Initializable, OwnableUpgradeable {
 
   /**
    * @notice Modifier to restrict access to broadcaster only
+   * @dev If broadcaster is address(0), allows permissionless access (anyone can call)
    */
   modifier onlyBroadcaster() {
-    require(msg.sender == broadcaster, "RelayAdapt: Only broadcaster");
+    require(
+      broadcaster == address(0) || msg.sender == broadcaster,
+      "RelayAdapt: Only broadcaster"
+    );
     _;
   }
 
@@ -104,7 +108,7 @@ contract RelayAdapt is Initializable, OwnableUpgradeable {
    * @dev OpenZeppelin initializer ensures this can only be called once
    * @param _railgun - RailgunSmartWallet contract address
    * @param _wBase - Wrapped base token (e.g., WETH) address
-   * @param _broadcaster - Initial broadcaster address
+   * @param _broadcaster - Initial broadcaster address (address(0) for permissionless mode)
    * @param _owner - Owner address for access control
    */
   function initialize(
@@ -135,10 +139,10 @@ contract RelayAdapt is Initializable, OwnableUpgradeable {
 
   /**
    * @notice Set broadcaster address
-   * @param _broadcaster - New broadcaster address
+   * @param _broadcaster - New broadcaster address (address(0) for permissionless mode)
+   * @dev Setting to address(0) enables permissionless mode where anyone can call delegateShield and relay
    */
   function setBroadcaster(address _broadcaster) external onlyOwner {
-    require(_broadcaster != address(0), "RelayAdapt: Invalid broadcaster address");
     broadcaster = _broadcaster;
     emit BroadcasterChange(_broadcaster);
   }
