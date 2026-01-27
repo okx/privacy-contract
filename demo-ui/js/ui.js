@@ -1,6 +1,6 @@
 // UI Update and DOM Management
 import { formatAddress, formatMPK, formatBalance, getTimeAgo } from './utils.js';
-import { erc20TokenInfo } from './config.js';
+import { erc20TokenInfo, CONFIG } from './config.js';
 
 // DOM Cache for performance
 class DOMCache {
@@ -78,7 +78,7 @@ export function updateConnectButton(state) {
     connectBtn.textContent = formatAddress(state.account) + ' ▾';
     connectBtn.classList.add('connected');
   } else {
-    connectBtn.textContent = 'Connect MetaMask';
+    connectBtn.textContent = 'Connect Wallet';
     connectBtn.classList.remove('connected');
   }
 }
@@ -138,7 +138,6 @@ export function updateMPKDisplay(state, derivedKeys) {
           registerBtn.className = 'register-btn';
           registerBtn.textContent = 'Register MPK';
           registerBtn.onclick = () => {
-            // Will be bound in wallet.js
             window.dispatchEvent(new CustomEvent('register-mpk'));
           };
           mpkStatus.appendChild(registerBtn);
@@ -371,10 +370,12 @@ export function showTransactionDetails(tx, chainId) {
               <code style="flex: 1; font-family: monospace; font-size: 13px; word-break: break-all; background: var(--bg-card); padding: 8px; border-radius: 6px; user-select: all; cursor: text;">${tx.txHash}</code>
               <button class="copy-hash-btn" data-hash="${tx.txHash}" style="padding: 8px 12px; background: var(--accent-blue); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;">Copy</button>
             </div>
-            ${chainId === 31337 ? `
+            ${chainId === 1337 ? `
               <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">Local network - no explorer available</div>
+            ` : CONFIG.TARGET_CHAIN.blockExplorerUrl ? `
+              <a href="${CONFIG.TARGET_CHAIN.blockExplorerUrl}/tx/${tx.txHash}" target="_blank" style="margin-top: 8px; display: inline-block; font-size: 12px; color: var(--accent-blue); text-decoration: none;">View on Explorer →</a>
             ` : `
-              <a href="https://etherscan.io/tx/${tx.txHash}" target="_blank" style="margin-top: 8px; display: inline-block; font-size: 12px; color: var(--accent-blue); text-decoration: none;">View on Etherscan →</a>
+              <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">Explorer not configured</div>
             `}
           </div>
         ` : `
@@ -490,11 +491,16 @@ export function setButtonLoading(selector, isLoading, loadingText = 'Loading...'
   if (!btn) return;
   
   if (isLoading) {
+    // Only save original text once (when button is not loading yet)
+    if (!btn.dataset.originalText) {
+      btn.dataset.originalText = btn.textContent;
+    }
     btn.disabled = true;
-    btn.dataset.originalText = btn.textContent;
     btn.innerHTML = `<span class="spinner"></span> ${loadingText}`;
   } else {
     btn.disabled = false;
     btn.textContent = btn.dataset.originalText || btn.textContent;
+    // Clear the saved text after restoring
+    delete btn.dataset.originalText;
   }
 }

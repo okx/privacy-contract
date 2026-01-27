@@ -3,7 +3,6 @@ import { loadContractConfig, connectWallet, registerMPK, setupProviderListeners,
 import { handleShield, handleUnshield, handleTransfer } from './transactions.js';
 import * as UI from './ui.js';
 import { waitForLibrary, debounce, copyToClipboard } from './utils.js';
-import { toast } from '../components/toast.js';
 
 class PrivacyWalletApp {
   constructor() {
@@ -35,11 +34,10 @@ class PrivacyWalletApp {
 
       this.initialized = true;
       console.log('✅ App initialized successfully');
-      console.log('👉 Click "Connect MetaMask" to start');
+      console.log('👉 Click "Connect Wallet" to start');
 
     } catch (error) {
       console.error('❌ Failed to initialize app:', error);
-      // toast.error('Failed to initialize application. Please refresh the page.', 'Initialization Error');
     }
   }
 
@@ -152,10 +150,8 @@ class PrivacyWalletApp {
     window.addEventListener('copy-to-clipboard', async (e) => {
       const success = await copyToClipboard(e.detail.text);
       if (success) {
-        // toast.success('Copied to clipboard!', 'Copied');
         console.log('Copied to clipboard');
       } else {
-        // toast.error('Failed to copy to clipboard', 'Copy Failed');
         console.error('Failed to copy to clipboard');
       }
     });
