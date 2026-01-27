@@ -70,14 +70,12 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
   // Transaction events
   event Transact(
-    uint256 treeNumber,
     uint256 startPosition,
     bytes32[] hash,
     CommitmentCiphertext[] ciphertext
   );
 
   event Shield(
-    uint256 treeNumber,
     uint256 startPosition,
     CommitmentPreimage[] commitments,
     ShieldCiphertext[] shieldCiphertext,
@@ -86,7 +84,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
   event Unshield(address to, TokenData token, uint256 amount, uint256 fee);
 
-  event Nullified(uint16 treeNumber, bytes32[] nullifier);
+  event Nullified(bytes32[] nullifier);
 
   // Event for RelayAdapt initialization
   event RelayAdaptInitialized(address relayAdapt);
@@ -455,7 +453,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
     if (_transaction.boundParams.chainID != block.chainid) return (false, "ChainID mismatch");
 
     // Merkle root must be a seen historical root
-    if (!Commitments.rootHistory[_transaction.boundParams.treeNumber][_transaction.merkleRoot])
+    if (!Commitments.isKnownRoot(_transaction.merkleRoot, _transaction.rootIndex))
       return (false, "Invalid Merkle Root");
 
     if (_transaction.boundParams.unshield != UnshieldType.NONE) {
@@ -517,20 +515,16 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
     ) {
       // If nullifier has been seen before revert
       require(
-        !Commitments.nullifiers[_transaction.boundParams.treeNumber][
-          _transaction.nullifiers[nullifierIter]
-        ],
+        !Commitments.nullifiers[_transaction.nullifiers[nullifierIter]],
         "RailgunLogic: Note already spent"
       );
 
       // Set nullifier to seen
-      Commitments.nullifiers[_transaction.boundParams.treeNumber][
-        _transaction.nullifiers[nullifierIter]
-      ] = true;
+      Commitments.nullifiers[_transaction.nullifiers[nullifierIter]] = true;
     }
 
     // Emit nullifier event
-    emit Nullified(_transaction.boundParams.treeNumber, _transaction.nullifiers);
+    emit Nullified(_transaction.nullifiers);
 
     // Loop through each commitment
     for (

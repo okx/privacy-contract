@@ -346,7 +346,10 @@ async function main() {
   console.log('Transfer inputs:', inputNotes.length);
   console.log('Transfer outputs:', outputNotes.length);
 
-  // 2.4 Prepare actionData and calculate adaptParams BEFORE generating proof
+  // 2.4 Get root index for the transaction
+  const rootIndex = await railgun.getCurrentRootIndex();
+
+  // 2.5 Prepare actionData
   const actionData = {
     random: ethers.utils.hexlify(randomBytes(31)),
     requireSuccess: true,
@@ -354,7 +357,7 @@ async function main() {
     calls: [] as ActionDataCall[], // no additional calls
   };
 
-  // Calculate adaptParams to match RelayAdapt.getAdaptParams()
+  // 2.6 Calculate adaptParams BEFORE generating proof
   console.log('Calculating adaptParams...');
   const adaptParams = await calculateAdaptParams(
     merkletree,
@@ -364,11 +367,12 @@ async function main() {
   );
   console.log('adaptParams:', ethers.utils.hexlify(adaptParams));
 
-  // 2.5 Generate SNARK proof with correct adaptParams
+  // 2.7 Generate SNARK proof with correct adaptParams
   console.log('Generating SNARK proof (this may take a moment)...');
   const proofStartTime = Date.now();
   const transferTransaction = await transact(
     merkletree,
+    rootIndex, // root index for O(1) lookup
     0n, // minGasPrice
     UnshieldType.NONE, // no unshield
     chainID,
@@ -380,8 +384,9 @@ async function main() {
   const proofEndTime = Date.now();
   console.log(`✅ SNARK proof generated (${proofEndTime - proofStartTime}ms)`);
 
-  // 2.6 Broadcaster executes relay
-  console.log('Broadcaster executing relay...');
+
+  // 2.7 Broadcaster executes relay
+  console.log('\nBroadcaster executing relay...');
 
   const transferTx = await relayAdapt.connect(broadcaster).relay(
     [transferTransaction],
@@ -439,11 +444,15 @@ async function main() {
   );
   console.log('unshieldAdaptParams:', ethers.utils.hexlify(unshieldAdaptParams));
 
-  // 3.3 Generate SNARK proof with correct adaptParams
+  // 3.3 Get root index for unshield transaction
+  const unshieldRootIndex = await railgun.getCurrentRootIndex();
+
+  // 3.4 Generate SNARK proof with correct adaptParams
   console.log('Generating SNARK proof for unshield...');
   const unshieldProofStart = Date.now();
   const unshieldTransaction = await transact(
     merkletree,
+    unshieldRootIndex, // root index for O(1) lookup
     0n, // minGasPrice
     UnshieldType.NORMAL, // normal unshield
     chainID,
@@ -455,8 +464,8 @@ async function main() {
   const unshieldProofEnd = Date.now();
   console.log(`✅ SNARK proof generated (${unshieldProofEnd - unshieldProofStart}ms)`);
 
-  // 3.4 Broadcaster executes relay for unshield
-  console.log('Broadcaster executing relay for unshield...');
+  // 3.5 Broadcaster executes relay for unshield
+  console.log('\nBroadcaster executing relay for unshield...');
 
   const unshieldTx = await relayAdapt.connect(broadcaster).relay(
     [unshieldTransaction],
