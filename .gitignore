@@ -38,3 +38,6 @@ demo-ui/deployments.json
 # Generated/Built Files
 demo-ui/railgun-wallet-bundle.js
 demo-ui/railgun-wallet-bundle.js.map
+
+# DevTools
+demo-ui/.well-known/

@@ -44,6 +44,8 @@ contract Commitments is Initializable {
   // Tree number
   uint256 public treeNumber;
 
+  bool public isRootUpdated = false;
+
   // The Merkle path to the leftmost leaf upon initialization. It *should
   // not* be modified after it has been set by the initialize function.
   // Caching these values is essential to efficient appends.
@@ -238,6 +240,98 @@ contract Commitments is Initializable {
 
     // Increment tree number
     treeNumber += 1;
+  }
+
+  /**
+   * @notice Add leaves and update filledSubTrees without calculating root
+   * @dev Updates filledSubTrees (branch nodes) similar to Polygon's _branch array
+   * This allows updateRoot to calculate root from filledSubTrees without needing leaves
+   * @param _leafHashes - array of leaf hashes to be added
+   */
+  function addLeaves(bytes32[] memory _leafHashes) internal {
+    uint256 count = _leafHashes.length;
+    
+    // If 0 leaves are passed in no-op
+    if (count == 0) {
+      return;
+    }
+    
+    // Create new tree if current one can't contain new leaves
+    if ((nextLeafIndex + count) > (2 ** TREE_DEPTH)) {
+      newTree();
+    }
+    
+    // Update filledSubTrees at each level (similar to Polygon's _branch update)
+    for (uint256 height = 0; height < TREE_DEPTH; height++) {
+      uint256 index = 0;
+      if ((nextLeafIndex >> height) & 1 == 1) { //odd
+        _leafHashes[index] = hashLeftRight(filledSubTrees[height], _leafHashes[index]);
+        index++;
+      }
+      while (index < count) {
+        if (index + 1 == count) {
+          filledSubTrees[height] = _leafHashes[index];
+          break;
+        }
+        _leafHashes[(index+1)/2] = hashLeftRight(_leafHashes[index], _leafHashes[index + 1]);
+        index += 2;
+      }
+
+      // Calculate count for next level
+      // If current level is odd and count is odd: count = count / 2 + 1
+      // Otherwise: count = count / 2
+      if ((nextLeafIndex >> height) & 1 == 1 && (count & 1 == 1)) {
+        count = count / 2 + 1;
+      } else {
+        count = count / 2;
+      }
+
+      if (count == 0) {
+        break;
+      }
+    }
+    
+    // Update nextLeafIndex
+    nextLeafIndex += _leafHashes.length;
+    isRootUpdated = false;
+  }
+
+  /**
+* @notice Calculate and update root from filledSubTrees (similar to Polygon's getRoot)
+* @dev Uses filledSubTrees and nextLeafIndex to calculate root, no need for leaf hashes
+* This is similar to Polygon's getRoot() which calculates root from _branch and depositCount
+*/
+function updateRoot() public {
+    if (isRootUpdated) {
+        return;
+    }
+    // Update root and history
+    merkleRoot = getRoot();
+    rootHistory[treeNumber][merkleRoot] = true;
+    isRootUpdated = true;
+}
+
+function getRoot() public view returns (bytes32) {
+    if (nextLeafIndex == 0) {
+      return merkleRoot;
+    }
+    
+    bytes32 node = zeros[0];
+    uint256 size = nextLeafIndex;
+    
+    // Calculate root from filledSubTrees (similar to Polygon's getRoot)
+    for (uint256 height = 0; height < TREE_DEPTH; height++) {
+      if (((size >> height) & 1) == 1) {
+        // Use filledSubTree (branch node) at this level
+        node = hashLeftRight(filledSubTrees[height], node);
+      } else if (node == zeros[height]) {
+        // Use zero hash at this level
+        node = zeros[height + 1];
+      } else {
+        node = hashLeftRight(node, zeros[height]);
+      }
+    }
+    return node;
   }
 
   /**

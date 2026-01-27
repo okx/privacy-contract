@@ -1,9 +1,10 @@
 // Configuration Management
 export const CONFIG = {
+  // TARGET_CHAIN will be loaded dynamically from server
   TARGET_CHAIN: {
-    chainId: 31337,
-    chainName: 'Hardhat Local',
-    rpcUrl: 'http://localhost:8545',
+    chainId: null,     // Will be loaded from /api/network-config
+    chainName: null,   // Will be loaded from /api/network-config
+    rpcUrl: null,      // Will be loaded from /api/network-config
     nativeCurrency: {
       name: 'Ether',
       symbol: 'ETH',
@@ -54,10 +55,43 @@ export const erc20TokenInfo = {
   decimals: 18
 };
 
+// Load network configuration from server
+async function loadNetworkConfig() {
+  try {
+    const response = await fetch('/api/network-config');
+    if (response.ok) {
+      const networkConfig = await response.json();
+      
+      CONFIG.TARGET_CHAIN.chainId = networkConfig.chainId;
+      CONFIG.TARGET_CHAIN.chainName = networkConfig.chainName;
+      CONFIG.TARGET_CHAIN.rpcUrl = networkConfig.rpcUrl;
+      CONFIG.TARGET_CHAIN.blockExplorerUrl = networkConfig.blockExplorerUrl || '';
+      
+      console.log('✅ Network configuration loaded:');
+      console.log('  Chain ID:', networkConfig.chainId);
+      console.log('  Chain Name:', networkConfig.chainName);
+      console.log('  RPC URL:', networkConfig.rpcUrl);
+      console.log('  Block Explorer:', networkConfig.blockExplorerUrl || 'Not configured');
+      console.log('  Mode:', networkConfig.isLocal ? 'LOCAL' : 'ONLINE');
+      
+      return true;
+    } else {
+      console.warn('⚠️ Failed to load network config');
+      return false;
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to load network config:', error.message);
+    return false;
+  }
+}
+
 // Load contract configuration from deployments.json
 export async function loadContractConfig() {
   try {
-    // First, check if server session changed (server restarted)
+    // First, load network configuration
+    await loadNetworkConfig();
+    
+    // Then check if server session changed (server restarted)
     const { storage } = await import('./utils.js');
     await checkServerSession(storage);
     

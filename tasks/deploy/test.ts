@@ -35,27 +35,44 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const { ethers } = hre;
   await hre.run('compile');
 
-  // Get build artifacts
-  const Delegator = await ethers.getContractFactory('Delegator');
-  const PoseidonT3 = await ethers.getContractFactory('PoseidonT3');
-  const PoseidonT4 = await ethers.getContractFactory('PoseidonT4');
-  const Proxy = await ethers.getContractFactory('PausableUpgradableProxy');
-  const ProxyAdmin = await ethers.getContractFactory('ProxyAdmin');
-  const RailToken = await ethers.getContractFactory('AdminERC20');
-  const TestERC20 = await ethers.getContractFactory('TestERC20');
-  const TestERC721 = await ethers.getContractFactory('TestERC721');
-  const RelayAdapt = await ethers.getContractFactory('RelayAdapt');
-  const MPKRegistry = await ethers.getContractFactory('MPKRegistry');
-  const Staking = await ethers.getContractFactory('Staking');
-  const TreasuryImplementation = await ethers.getContractFactory('Treasury');
-  const Voting = await ethers.getContractFactory('Voting');
+  // Get deployer account (validation already done in hardhat.config.ts)
+  const isLocal = process.env.LOCAL === 'true';
+  let deployer;
+  
+  if (isLocal) {
+    console.log('Using default test account for deployment');
+    deployer = (await ethers.getSigners())[0];
+  } else {
+    console.log('Using configured private key for deployment');
+    deployer = new ethers.Wallet(process.env.DEPLOYER_PRIVATE_KEY!, ethers.provider);
+  }
+  console.log('Deployer address:', deployer.address);
+
+  // Get build artifacts (using deployer account)
+  const Delegator = await ethers.getContractFactory('Delegator', deployer);
+  const PoseidonT3 = await ethers.getContractFactory('PoseidonT3', deployer);
+  const PoseidonT4 = await ethers.getContractFactory('PoseidonT4', deployer);
+  const Proxy = await ethers.getContractFactory('PausableUpgradableProxy', deployer);
+  const ProxyAdmin = await ethers.getContractFactory('ProxyAdmin', deployer);
+  const RailToken = await ethers.getContractFactory('AdminERC20', deployer);
+  const TestERC20 = await ethers.getContractFactory('TestERC20', deployer);
+  const TestERC721 = await ethers.getContractFactory('TestERC721', deployer);
+  const RelayAdapt = await ethers.getContractFactory('RelayAdapt', deployer);
+  const MPKRegistry = await ethers.getContractFactory('MPKRegistry', deployer);
+  const Staking = await ethers.getContractFactory('Staking', deployer);
+  const TreasuryImplementation = await ethers.getContractFactory('Treasury', deployer);
+  const Voting = await ethers.getContractFactory('Voting', deployer);
 
   // Deploy Poseidon libraries
   const poseidonT3 = await PoseidonT3.deploy();
+  await logVerify('PoseidonT3', poseidonT3, []);
+  
   const poseidonT4 = await PoseidonT4.deploy();
+  await logVerify('PoseidonT4', poseidonT4, []);
 
   // Get Railgun Smart Wallet
   const RailgunSmartWallet = await ethers.getContractFactory('RailgunSmartWalletStub', {
+    signer: deployer,
     libraries: {
       PoseidonT3: poseidonT3.address,
       PoseidonT4: poseidonT4.address,
@@ -65,15 +82,15 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   // Deploy RailToken
   const rail = await RailToken.deploy('RailTest', 'RAILTEST');
   await logVerify('AdminERC20', rail, ['RailTest', 'RAILTEST']);
-  await rail.adminMint((await ethers.getSigners())[0].address, 50000000n * 10n ** 18n);
+  await rail.adminMint(deployer.address, 50000000n * 10n ** 18n);
 
   // Deploy Staking
   const staking = await Staking.deploy(rail.address);
   await logVerify('Staking', staking, [rail.address]);
 
   // Deploy delegator
-  const delegator = await Delegator.deploy((await ethers.getSigners())[0].address);
-  await logVerify('Delegator', delegator, [(await ethers.getSigners())[0].address]);
+  const delegator = await Delegator.deploy(deployer.address);
+  await logVerify('Delegator', delegator, [deployer.address]);
 
   // Deploy voting
   const voting = await Voting.deploy(staking.address, delegator.address);
@@ -84,8 +101,8 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   await logVerify('Treasury Implementation', treasuryImplementation, []);
 
   // Deploy ProxyAdmin
-  const proxyAdmin = await ProxyAdmin.deploy((await ethers.getSigners())[0].address);
-  await logVerify('Proxy Admin', proxyAdmin, [(await ethers.getSigners())[0].address]);
+  const proxyAdmin = await ProxyAdmin.deploy(deployer.address);
+  await logVerify('Proxy Admin', proxyAdmin, [deployer.address]);
 
   // Deploy treasury proxy
   const treasuryProxy = await Proxy.deploy(proxyAdmin.address);
@@ -119,23 +136,30 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
       25n,
       25n,
       25n,
-      (
-        await ethers.getSigners()
-      )[0].address,
+      deployer.address,
       { gasLimit: 2000000 },
     )
   ).wait();
 
   // Set artifacts
   console.log('\nSetting Artifacts');
-  await loadArtifacts(railgun, listArtifacts());
+  
+  // Custom circuit list: inputs 1-10, outputs 1 or 2 (20 circuits total)
+  const customCircuits = [];
+  for (let nullifiers = 1; nullifiers <= 10; nullifiers++) {
+    for (let commitments = 1; commitments <= 2; commitments++) {
+      customCircuits.push({ nullifiers, commitments });
+    }
+  }
+  
+  console.log(`Loading ${customCircuits.length} circuits (inputs: 1-10, outputs: 1-2)...`);
+  await loadArtifacts(railgun, customCircuits);
+  console.log('✅ All circuits loaded');
 
   // Give deployer address full permissions
-  console.log(`\nGiving full governance permissions to ${(await ethers.getSigners())[0].address}`);
+  console.log(`\nGiving full governance permissions to ${deployer.address}`);
   await delegator.setPermission(
-    (
-      await ethers.getSigners()
-    )[0].address,
+    deployer.address,
     ethers.constants.AddressZero,
     '0x00000000',
     true,
@@ -151,7 +175,7 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   const WETH9 = new ethers.ContractFactory(
     weth9artifact.abi,
     weth9artifact.bytecode,
-    (await ethers.getSigners())[0],
+    deployer,
   );
   const weth9 = await WETH9.deploy();
   await logVerify('WETH9', weth9, []);
@@ -166,10 +190,27 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
 
   // Mint 10000 tokens to specified addresses
   const mintAmount = ethers.utils.parseEther('10000');
-  const addressesToMint = [
-    '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
-    '0x70997970c51812dc3a010c7d01b50e0d17dc79c8',
+  
+  // Select addresses based on LOCAL mode
+  const localAddresses = [
+    '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',  // Hardhat account #1
+    '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',  // Hardhat account #2
   ];
+  
+  const onlineAddresses = [
+    '0x694a97f84ceda9CfAF9e2A7fd40E05074207C4F7',
+    '0x0099fFe96Ee19D1d70DA691A660972de8A3d19BB',
+    '0x370427e759a84fdFfed8b948DAe21afF1167f018',
+    '0x89EeA4015aC3DB922d9d1fFaC1E67Bc61650a20B',
+    '0x6c589b529Cb92576dC549e57fd637D8629948844',
+    '0xaD22c97b121Ef5313A934a10Edc510947982e283',
+    '0x038352a4e8b7e36904e1b5C670E8ae00deA1FBB1',
+    '0xA14a8bFf55bC15A64961393a0CdE1F90D1aF5B5A',
+  ];
+  
+  const addressesToMint = isLocal ? localAddresses : onlineAddresses;
+  
+  console.log(`\nMinting to ${addressesToMint.length} addresses (${isLocal ? 'LOCAL' : 'ONLINE'} mode)...`);
 
   console.log('\nMinting TestERC20 tokens...');
   for (const address of addressesToMint) {

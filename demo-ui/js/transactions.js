@@ -2,7 +2,6 @@
 import { CONFIG, contracts, erc20TokenInfo } from './config.js';
 import { ensureEthers, validateAmount } from './utils.js';
 import { walletState, addTransaction, updateTransactionStatus, refreshBalances } from './wallet.js';
-import { toast } from '../components/toast.js';
 import * as UI from './ui.js';
 
 // Signature message for key derivation
@@ -30,17 +29,37 @@ async function requestSignatureConfirmation() {
 }
 
 // Broadcast transaction via server API
-async function broadcast(type, transaction, railgunAddress) {
+async function broadcast(type, transaction) {
   const response = await fetch('/api/broadcast', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type, transaction, railgunAddress })
+    body: JSON.stringify({ type, transaction })
   });
   const result = await response.json();
   if (!result.success) {
     throw new Error(result.error || 'Broadcast failed');
   }
   return result;
+}
+
+// Request broadcaster to update Merkle root (fire and forget)
+function requestUpdateRoot() {
+  // Fire and forget - don't wait for response
+  fetch('/api/update-root', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  })
+    .then(response => response.json())
+    .then(result => {
+      if (!result.success) {
+        console.warn('Update root failed (non-critical):', result.error);
+      } else {
+        console.log('✅ Update root requested');
+      }
+    })
+    .catch(error => {
+      console.warn('Update root request failed (non-critical):', error.message);
+    });
 }
 
 // Helper: Format transaction for contract
@@ -100,26 +119,28 @@ function formatTransactionForContract(transaction) {
 
 // Shield function
 export async function handleShield(amountValue) {
+  console.log('Shield button clicked, amount:', amountValue);
+  
   if (!walletState.signer || !walletState.account) {
-    toast.warning('Please connect your wallet first', 'Not Connected');
+    console.error('Shield failed: Wallet not connected');
     return;
   }
 
   if (!walletState.derivedKeys.spendingKey || !walletState.derivedKeys.viewingKey) {
-    toast.warning('Please generate MPK first', 'MPK Required');
+    console.error('Shield failed: Keys not derived');
     return;
   }
 
   // Check if user has registered MPK
   if (!walletState.isRegistered) {
-    toast.warning('Please register your MPK before shielding. Click the "Register MPK" button.', 'Registration Required');
+    console.error('Shield failed: MPK not registered');
     return;
   }
 
   try {
     validateAmount(amountValue);
   } catch (error) {
-    toast.error(error.message, 'Invalid Amount');
+    console.error('Shield failed: Invalid amount -', error.message);
     return;
   }
 
@@ -132,36 +153,22 @@ export async function handleShield(amountValue) {
     
     // Check contract configuration
     if (contracts.railgun === '0x0000000000000000000000000000000000000000') {
-      toast.error('Railgun contract not configured', 'Configuration Error');
+      console.error('Shield failed: Railgun contract not configured');
       return;
     }
 
     if (contracts.testERC20 === '0x0000000000000000000000000000000000000000') {
-      toast.error('TestERC20 contract not configured', 'Configuration Error');
+      console.error('Shield failed: TestERC20 contract not configured');
       return;
     }
 
-    // Check balance and allowance
+    // Check balance
     const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, walletState.signer);
     const balance = await testERC20.balanceOf(walletState.account);
-    const allowance = await testERC20.allowance(walletState.account, contracts.railgun);
 
     if (balance.lt(amountWei)) {
-      toast.error(`Insufficient balance: ${ethersLib.utils.formatEther(balance)} / ${amountValue}`, 'Insufficient Balance');
+      console.error('Shield failed: Insufficient balance. Have:', ethersLib.utils.formatEther(balance), 'Need:', amountValue);
       return;
-    }
-
-    // Approve if needed
-    if (allowance.lt(amountWei)) {
-      UI.setButtonLoading('#shield-panel .submit-btn', true, 'Approving...');
-      const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
-      toast.txPending(approveTx.hash, 'Approving token spend...');
-      await approveTx.wait();
-      toast.success('Approval confirmed!', 'Approved');
-      
-      // Brief delay before next transaction
-      UI.setButtonLoading('#shield-panel .submit-btn', true, 'Preparing Shield...');
-      await new Promise(resolve => setTimeout(resolve, 1500));
     }
 
     // Create shield request
@@ -200,39 +207,49 @@ export async function handleShield(amountValue) {
     // Call shield function
     const railgun = new ethersLib.Contract(contracts.railgun, CONFIG.RAILGUN_ABI, walletState.signer);
     
-    // Estimate gas
+    // Estimate gas (let ethers.js handle gas price automatically)
     let gasLimit;
     try {
       const estimatedGas = await railgun.estimateGas.shield([shieldRequest]);
       gasLimit = estimatedGas.mul(120).div(100);
     } catch (error) {
       console.warn('Gas estimation failed, using default:', error.message);
-      gasLimit = ethersLib.BigNumber.from(10000000);
+      gasLimit = ethersLib.BigNumber.from(2000000);
     }
 
     shieldTx = await railgun.shield([shieldRequest], { gasLimit });
     
     addTransaction('shield', 'Shield', `Shielding ${amountValue} ${erc20TokenInfo.symbol}`, `+${amountValue} ${erc20TokenInfo.symbol}`, shieldTx.hash, 'pending');
-    toast.txPending(shieldTx.hash, `Shielding ${amountValue} ${erc20TokenInfo.symbol}...`);
+    
+    // Request broadcaster to update Merkle root immediately (fire and forget)
+    requestUpdateRoot();
     
     const receipt = await shieldTx.wait();
 
-    // Scan transaction
-    await walletState.railgunWallet.registerAccount(walletState.account);
-    await walletState.railgunWallet.scanTransaction(shieldTx.hash, walletState.account);
-    
-    // Update balances
-    const privateBalance = await walletState.railgunWallet.getBalance(
-      walletState.account,
-      contracts.testERC20,
-      0
-    );
-    walletState.privateBalance = parseFloat(ethersLib.utils.formatEther(privateBalance)).toFixed(2);
-
+    // Update UI immediately
     updateTransactionStatus(shieldTx.hash, 'success', 'Shield', `Shielded ${amountValue} ${erc20TokenInfo.symbol}`);
-    await refreshBalances();
     
-    toast.txSuccess(`Successfully shielded ${amountValue} ${erc20TokenInfo.symbol}!`);
+    // Scan transaction and update balances in background
+    (async () => {
+      try {
+        await walletState.railgunWallet.registerAccount(walletState.account);
+        await walletState.railgunWallet.scanTransaction(shieldTx.hash, walletState.account);
+        
+        // Update balances
+        const privateBalance = await walletState.railgunWallet.getBalance(
+          walletState.account,
+          contracts.testERC20,
+          0
+        );
+        walletState.privateBalance = parseFloat(ethersLib.utils.formatEther(privateBalance)).toFixed(2);
+        
+        await refreshBalances();
+        console.log('✅ Shield scanned and balances updated');
+      } catch (scanError) {
+        console.warn('Background scan failed:', scanError.message);
+      }
+    })();
+    
 
   } catch (error) {
     console.error('Shield failed:', error);
@@ -241,10 +258,10 @@ export async function handleShield(amountValue) {
     let txHash = shieldTx?.hash || error.transaction?.hash || error.receipt?.transactionHash;
     
     if (txHash) {
-      addTransaction('shield', 'Shield', `Failed to shield ${amountValue} ${erc20TokenInfo.symbol}`, `+${amountValue} ${erc20TokenInfo.symbol}`, txHash, 'failed');
+      // Update existing transaction status instead of adding a new one
+      updateTransactionStatus(txHash, 'failed', 'Shield', `Failed to shield ${amountValue} ${erc20TokenInfo.symbol}`);
     }
     
-    toast.txFailed(error);
   } finally {
     UI.setButtonLoading('#shield-panel .submit-btn', false);
   }
@@ -252,46 +269,46 @@ export async function handleShield(amountValue) {
 
 // Unshield function
 export async function handleUnshield(amountValue) {
+  console.log('Unshield button clicked, amount:', amountValue);
+  
   if (!walletState.signer || !walletState.account) {
-    toast.warning('Please connect your wallet first', 'Not Connected');
+    console.error('Unshield failed: Wallet not connected');
     return;
   }
 
   if (!walletState.derivedKeys.spendingKey || !walletState.derivedKeys.viewingKey) {
-    toast.warning('Please generate MPK first', 'MPK Required');
+    console.error('Unshield failed: Keys not derived');
     return;
   }
 
   try {
     validateAmount(amountValue);
   } catch (error) {
-    toast.error(error.message, 'Invalid Amount');
+    console.error('Unshield failed: Invalid amount -', error.message);
     return;
   }
 
   const ethersLib = ensureEthers();
+  
+  // Pre-check balance before showing loading state
+  const amountWei = ethersLib.utils.parseEther(amountValue);
+  const privateBalance = await walletState.railgunWallet.getBalance(
+    walletState.account,
+    contracts.testERC20,
+    0
+  );
+  
+  if (privateBalance < amountWei.toBigInt()) {
+    return;
+  }
+
   UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Sign to confirm...');
 
   try {
-    // Request signature confirmation
     await requestSignatureConfirmation();
-    toast.info('Signature verified', 'Confirmed');
     
     UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Preparing...');
-    const amountWei = ethersLib.utils.parseEther(amountValue);
     const recipient = walletState.account;
-
-    // Check private balance
-    const privateBalance = await walletState.railgunWallet.getBalance(
-      walletState.account,
-      contracts.testERC20,
-      0
-    );
-    
-    if (privateBalance < amountWei.toBigInt()) {
-      toast.error(`Insufficient private balance: ${ethersLib.utils.formatEther(privateBalance)} / ${amountValue}`, 'Insufficient Balance');
-      return;
-    }
 
     // Prepare unshield transaction
     const unshieldData = await walletState.railgunWallet.prepareUnshieldTransaction(
@@ -323,25 +340,25 @@ export async function handleUnshield(amountValue) {
 
     // Broadcast via server
     UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Broadcasting...');
-    const result = await broadcast('unshield', formattedTransaction, contracts.railgun);
+    const result = await broadcast('unshield', formattedTransaction);
     
-    addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
-    toast.txPending(result.txHash, `Unshielding ${amountValue} ${erc20TokenInfo.symbol}...`);
+    // Broadcast returns only when confirmed, so add as success directly
+    addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
 
-    try {
-      await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
-    } catch (scanError) {
-      console.warn('Scan error (non-critical):', scanError.message);
-    }
-
-    updateTransactionStatus(result.txHash, 'success');
-    await refreshBalances();
+    // Scan transaction and refresh balances in background
+    (async () => {
+      try {
+        await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
+        await refreshBalances();
+        console.log('✅ Unshield scanned and balances updated');
+      } catch (scanError) {
+        console.warn('Background scan failed:', scanError.message);
+      }
+    })();
     
-    toast.txSuccess(`Successfully unshielded ${amountValue} ${erc20TokenInfo.symbol}!`);
 
   } catch (error) {
     console.error('Unshield failed:', error);
-    toast.txFailed(error);
   } finally {
     UI.setButtonLoading('#unshield-panel .submit-btn', false);
   }
@@ -349,60 +366,60 @@ export async function handleUnshield(amountValue) {
 
 // Transfer function
 export async function handleTransfer(recipientAddress, amountValue) {
+  console.log('Transfer button clicked, recipient:', recipientAddress, 'amount:', amountValue);
+  
   if (!walletState.signer) {
-    toast.warning('Please connect your wallet first', 'Not Connected');
+    console.error('Transfer failed: Wallet not connected');
     return;
   }
 
   if (!walletState.derivedKeys.spendingKey || !walletState.derivedKeys.viewingKey) {
-    toast.warning('Please generate MPK first', 'MPK Required');
+    console.error('Transfer failed: Keys not derived');
     return;
   }
 
   try {
     validateAmount(amountValue);
   } catch (error) {
-    toast.error(error.message, 'Invalid Amount');
+    console.error('Transfer failed: Invalid amount -', error.message);
     return;
   }
 
   const ethersLib = ensureEthers();
   
   if (!ethersLib.utils.isAddress(recipientAddress)) {
-    toast.error('Invalid recipient address', 'Invalid Address');
+    console.error('Transfer failed: Invalid recipient address -', recipientAddress);
+    return;
+  }
+
+  // Pre-check recipient and balance before showing loading state
+  const { lookupMPK } = await import('./wallet.js');
+  const userInfo = await lookupMPK(recipientAddress);
+  
+  if (!userInfo) {
+    console.error('Recipient MPK not found');
+    alert('Recipient has not registered their MPK. They need to connect and register first.');
+    return;
+  }
+
+  const amountWei = ethersLib.utils.parseEther(amountValue);
+  const privateBalance = await walletState.railgunWallet.getBalance(
+    walletState.account,
+    contracts.testERC20,
+    0
+  );
+  
+  if (privateBalance < amountWei.toBigInt()) {
+    console.error('Unshield failed: Insufficient private balance. Have:', ethersLib.utils.formatEther(privateBalance), 'Need:', amountValue);
     return;
   }
 
   UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Sign to confirm...');
 
   try {
-    // Request signature confirmation
     await requestSignatureConfirmation();
-    toast.info('Signature verified', 'Confirmed');
     
     UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Preparing...');
-    
-    // Import lookupMPK from wallet.js
-    const { lookupMPK } = await import('./wallet.js');
-    const userInfo = await lookupMPK(recipientAddress);
-    
-    if (!userInfo) {
-      toast.error(`Recipient ${recipientAddress.slice(0,10)}... is not registered`, 'Recipient Not Registered');
-      return;
-    }
-
-    const amountWei = ethersLib.utils.parseEther(amountValue);
-
-    const privateBalance = await walletState.railgunWallet.getBalance(
-      walletState.account,
-      contracts.testERC20,
-      0
-    );
-    
-    if (privateBalance < amountWei.toBigInt()) {
-      toast.error(`Insufficient private balance: ${ethersLib.utils.formatEther(privateBalance)} / ${amountValue}`, 'Insufficient Balance');
-      return;
-    }
 
     const transferData = await walletState.railgunWallet.prepareTransferTransaction(
       walletState.account,
@@ -436,31 +453,31 @@ export async function handleTransfer(recipientAddress, amountValue) {
 
     // Broadcast via server
     UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Broadcasting...');
-    const result = await broadcast('transfer', formattedTransaction, contracts.railgun);
+    const result = await broadcast('transfer', formattedTransaction);
     
     const { formatAddress } = await import('./utils.js');
-    addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
-    toast.txPending(result.txHash, `Transferring ${amountValue} ${erc20TokenInfo.symbol}...`);
+    // Broadcast returns only when confirmed, so add as success directly
+    addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
 
-    try {
-      await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
-      await walletState.railgunWallet.scanTransaction(result.txHash, recipientAddress, [{
-        tokenType: 0,
-        tokenAddress: contracts.testERC20,
-        tokenSubID: 0n,
-      }]);
-    } catch (scanError) {
-      console.warn('Scan error:', scanError.message);
-    }
-
-    updateTransactionStatus(result.txHash, 'success');
-    await refreshBalances();
+    // Scan transaction and refresh balances in background
+    (async () => {
+      try {
+        await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
+        await walletState.railgunWallet.scanTransaction(result.txHash, recipientAddress, [{
+          tokenType: 0,
+          tokenAddress: contracts.testERC20,
+          tokenSubID: 0n,
+        }]);
+        await refreshBalances();
+        console.log('✅ Transfer scanned and balances updated');
+      } catch (scanError) {
+        console.warn('Background scan failed:', scanError.message);
+      }
+    })();
     
-    toast.txSuccess(`Successfully transferred ${amountValue} ${erc20TokenInfo.symbol}!`);
 
   } catch (error) {
     console.error('Transfer failed:', error);
-    toast.txFailed(error);
   } finally {
     UI.setButtonLoading('#transfer-panel .submit-btn', false);
   }

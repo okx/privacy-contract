@@ -1,7 +1,6 @@
 // Wallet Management Module
 import { CONFIG, contracts, erc20TokenInfo, loadContractConfig as loadConfig } from './config.js';
 import { ensureEthers, getMetaMaskProvider, storage } from './utils.js';
-import { toast } from '../components/toast.js';
 import * as UI from './ui.js';
 
 // Wallet State (encapsulated)
@@ -74,44 +73,23 @@ async function initializeRailgunWallet() {
   state.railgunWallet.setCurrentAccount(state.account);
 }
 
-// Chain switching
+// Chain detection and validation
 async function switchToTargetChain(provider) {
   const currentChainIdHex = await provider.request({ method: 'eth_chainId' });
   const currentChainId = parseInt(currentChainIdHex, 16);
   
-  if (currentChainId === CONFIG.TARGET_CHAIN.chainId) {
-    return;
+  console.log('📡 Network status:');
+  console.log('   Current Chain ID:', currentChainId);
+  console.log('   Expected Chain ID:', CONFIG.TARGET_CHAIN.chainId);
+  console.log('   Expected RPC:', CONFIG.TARGET_CHAIN.rpcUrl);
+  
+  if (currentChainId !== CONFIG.TARGET_CHAIN.chainId) {
+    console.error('❌ Network mismatch!');
+    console.error(`   Please switch MetaMask to ${CONFIG.TARGET_CHAIN.chainName} (Chain ID: ${CONFIG.TARGET_CHAIN.chainId})`);
+    throw new Error(`Network mismatch: Connected to Chain ${currentChainId}, but expected Chain ${CONFIG.TARGET_CHAIN.chainId}. Please switch network in MetaMask.`);
   }
   
-  const targetChainIdHex = '0x' + CONFIG.TARGET_CHAIN.chainId.toString(16);
-  
-  try {
-    await provider.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: targetChainIdHex }]
-    });
-  } catch (switchError) {
-    if (switchError.code === 4902) {
-      try {
-        await provider.request({
-          method: 'wallet_addEthereumChain',
-          params: [{
-            chainId: targetChainIdHex,
-            chainName: CONFIG.TARGET_CHAIN.chainName,
-            nativeCurrency: CONFIG.TARGET_CHAIN.nativeCurrency,
-            rpcUrls: [CONFIG.TARGET_CHAIN.rpcUrl],
-            blockExplorerUrls: CONFIG.TARGET_CHAIN.blockExplorerUrl ? [CONFIG.TARGET_CHAIN.blockExplorerUrl] : []
-          }]
-        });
-      } catch (addError) {
-        if (addError.code !== 4001) {
-          console.warn('Failed to add chain:', addError.message);
-        }
-      }
-    } else if (switchError.code !== 4001) {
-      console.warn('Chain switch failed:', switchError.message);
-    }
-  }
+  console.log('✅ Network matched!');
 }
 
 // Load ERC20 token info
@@ -161,14 +139,12 @@ export async function connectWallet() {
   
   try {
     if (!window.ethereum) {
-      // toast.error('Please install MetaMask extension from https://metamask.io', 'MetaMask Not Found');
       console.error('MetaMask Not Found: Please install MetaMask extension');
       return;
     }
     
     const provider = getMetaMaskProvider();
     if (!provider) {
-      // toast.error('Could not detect MetaMask provider', 'Connection Error');
       console.error('Connection Error: Could not detect MetaMask provider');
       return;
     }
@@ -211,20 +187,16 @@ export async function connectWallet() {
     // Trigger MPK lookup if on transfer tab after connecting
     retriggerTransferLookup();
     
-    // toast.success(`Connected to ${state.account.slice(0, 6)}...${state.account.slice(-4)}`, 'Wallet Connected');
     console.log('Wallet Connected:', state.account);
     
   } catch (error) {
     console.error('Connection error:', error);
     
     if (error.code === 4001) {
-      // toast.warning('Connection rejected. Please approve in MetaMask.', 'Connection Rejected');
       console.warn('Connection Rejected:', error.message);
     } else if (error.code === -32002) {
-      // toast.info('A connection request is pending. Check MetaMask icon.', 'Pending Request');
       console.info('Pending Request:', error.message);
     } else {
-      // toast.error(error.message, 'Connection Failed');
       console.error('Connection Failed:', error.message);
     }
   } finally {
@@ -326,6 +298,31 @@ async function checkRegistrationStatus() {
     const userInfo = await registry.getUserInfo(state.account);
     
     state.isRegistered = userInfo.mpk !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+    
+    // If registered, check allowance and auto-approve if needed
+    if (state.isRegistered && contracts.testERC20 !== '0x0000000000000000000000000000000000000000') {
+      const ethersLib = ensureEthers();
+      const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
+      const allowance = await testERC20.allowance(state.account, contracts.railgun);
+      
+      if (allowance.eq(0)) {
+        console.log('⚠️ Token not approved (allowance = 0), auto-triggering approval...');
+        try {
+          const testERC20Signer = testERC20.connect(state.signer);
+          const approveTx = await testERC20Signer.approve(contracts.railgun, ethersLib.constants.MaxUint256);
+          await approveTx.wait();
+          console.log('✅ Token approved');
+        } catch (approveError) {
+          if (approveError.code === 4001) {
+            console.warn('⚠️ Token approval cancelled by user');
+          } else {
+            console.warn('⚠️ Token approval failed:', approveError.message);
+          }
+        }
+      } else {
+        console.log('✅ Token already approved. Allowance:', ethersLib.utils.formatUnits(allowance, 18));
+      }
+    }
   } catch (error) {
     console.warn('Failed to check registration status:', error);
     state.isRegistered = false;
@@ -335,19 +332,16 @@ async function checkRegistrationStatus() {
 // Register MPK
 export async function registerMPK() {
   if (!state.signer || !state.account) {
-    // toast.warning('Please connect your wallet first', 'Not Connected');
     console.warn('Not Connected: Please connect your wallet first');
     return;
   }
 
   if (!state.mpk || !state.derivedKeys.viewingPublicKey) {
-    // toast.warning('MPK not generated. Please wait for MPK generation to complete.', 'MPK Not Ready');
     console.warn('MPK Not Ready: MPK not generated');
     return;
   }
 
   if (contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
-    // toast.error('MPKRegistry contract not deployed!', 'Contract Not Found');
     console.error('Contract Not Found: MPKRegistry contract not deployed');
     return;
   }
@@ -363,7 +357,6 @@ export async function registerMPK() {
     );
     
     const tx = await registry.register(state.mpk, viewingPublicKeyBytes32);
-    // toast.txPending(tx.hash, 'Registering MPK on-chain...');
     
     await tx.wait();
     
@@ -374,10 +367,19 @@ export async function registerMPK() {
     state.isRegistered = true;
     updateUI();
     
-    // toast.txSuccess('MPK registered successfully!');
+    // Auto-approve token spending after registration
+    console.log('🔄 Approving token spending...');
+    try {
+      const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.signer);
+      const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
+      await approveTx.wait();
+      console.log('✅ Token approved. You can now Shield without additional approvals.');
+    } catch (approveError) {
+      console.warn('⚠️ Token approval failed:', approveError.message);
+    }
+    
   } catch (error) {
     console.error('Registration failed:', error);
-    // toast.txFailed(error);
   } finally {
     UI.setButtonLoading('.register-btn', false);
   }
@@ -574,7 +576,6 @@ export function setupProviderListeners() {
       state.reset();
       state.transactions = [];
       updateUI();
-      // toast.info('Wallet disconnected', 'Disconnected');
       console.info('Wallet disconnected');
     } else {
       state.publicBalance = '0.00';

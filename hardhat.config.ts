@@ -12,10 +12,32 @@ import './tasks';
 
 import mocharc from './.mocharc.json';
 
+// Load environment variables from .env file
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+// Determine if we're in local mode
+const isLocal = process.env.LOCAL === 'true';
+
+// Validate required environment variables in online mode
+if (!isLocal) {
+  if (!process.env.DEPLOYER_PRIVATE_KEY) {
+    console.error('❌ Error: DEPLOYER_PRIVATE_KEY is required when LOCAL=false');
+    console.error('   Please set it in .env file');
+    process.exit(1);
+  }
+  if (!process.env.RPC_URL) {
+    console.error('❌ Error: RPC_URL is required when LOCAL=false');
+    console.error('   Please set it in .env file');
+    process.exit(1);
+  }
+}
+
 const config: HardhatUserConfig = {
   defaultNetwork: 'hardhat',
   networks: {
     hardhat: {
+      chainId: 1337,
       // Allow unlimited contract size for complex contracts like Railgun
       // This helps avoid "Contract code size exceeds EIP-170 limit" errors
       allowUnlimitedContractSize: true,
@@ -27,12 +49,13 @@ const config: HardhatUserConfig = {
       // This is a limitation of the EVM itself, not Hardhat
     },
     localhost: {
-      url: 'http://127.0.0.1:8545',
-      chainId: 31337,
-      // Same settings for localhost network (when using Hardhat node)
+      url: isLocal ? (process.env.LOCAL_RPC || 'http://127.0.0.1:8545') : process.env.RPC_URL!,
+      chainId: isLocal ? 1337 : parseInt(process.env.CHAIN_ID!),
+      accounts: isLocal ? undefined : [process.env.DEPLOYER_PRIVATE_KEY!],
       allowUnlimitedContractSize: true,
       blockGasLimit: 30000000,
       gas: 12000000,
+      gasPrice: isLocal ? undefined : 'auto',
     },
   },
   solidity: {
