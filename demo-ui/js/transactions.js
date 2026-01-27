@@ -42,24 +42,22 @@ async function broadcast(type, transaction) {
   return result;
 }
 
-// Request broadcaster to update Merkle root (fire and forget)
-function requestUpdateRoot() {
-  // Fire and forget - don't wait for response
-  fetch('/api/update-root', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' }
-  })
-    .then(response => response.json())
-    .then(result => {
-      if (!result.success) {
-        console.warn('Update root failed (non-critical):', result.error);
-      } else {
-        console.log('✅ Update root requested');
-      }
-    })
-    .catch(error => {
-      console.warn('Update root request failed (non-critical):', error.message);
+// Request broadcaster to update Merkle root
+async function requestUpdateRoot() {
+  try {
+    const response = await fetch('/api/update-root', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
     });
+    const result = await response.json();
+    if (!result.success) {
+      console.warn('Update root failed:', result.error);
+    } else {
+      console.log('✅ Update root confirmed in block:', result.blockNumber);
+    }
+  } catch (error) {
+    console.warn('Update root request failed:', error.message);
+  }
 }
 
 // Helper: Format transaction for contract
@@ -217,14 +215,14 @@ export async function handleShield(amountValue) {
       gasLimit = ethersLib.BigNumber.from(2000000);
     }
 
+    // 1. Send shield transaction and wait for confirmation
     shieldTx = await railgun.shield([shieldRequest], { gasLimit });
-    
     addTransaction('shield', 'Shield', `Shielding ${amountValue} ${erc20TokenInfo.symbol}`, `+${amountValue} ${erc20TokenInfo.symbol}`, shieldTx.hash, 'pending');
     
-    // Request broadcaster to update Merkle root immediately (fire and forget)
-    requestUpdateRoot();
-    
     const receipt = await shieldTx.wait();
+    
+    // 2. After shield confirmed, send updateRoot and wait for confirmation
+    await requestUpdateRoot();
 
     // Update UI immediately
     updateTransactionStatus(shieldTx.hash, 'success', 'Shield', `Shielded ${amountValue} ${erc20TokenInfo.symbol}`);
@@ -345,17 +343,11 @@ export async function handleUnshield(amountValue) {
     // Broadcast returns only when confirmed, so add as success directly
     addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
 
-    // Scan transaction and refresh balances in background
-    (async () => {
-      try {
-        await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
-        await refreshBalances();
-        console.log('✅ Unshield scanned and balances updated');
-      } catch (scanError) {
-        console.warn('Background scan failed:', scanError.message);
-      }
-    })();
-    
+    // Scan transaction and refresh balances (must complete before unlocking button)
+    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Updating balances...');
+    await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
+    await refreshBalances();
+    console.log('✅ Unshield scanned and balances updated');
 
   } catch (error) {
     console.error('Unshield failed:', error);
@@ -459,22 +451,16 @@ export async function handleTransfer(recipientAddress, amountValue) {
     // Broadcast returns only when confirmed, so add as success directly
     addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
 
-    // Scan transaction and refresh balances in background
-    (async () => {
-      try {
-        await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
-        await walletState.railgunWallet.scanTransaction(result.txHash, recipientAddress, [{
-          tokenType: 0,
-          tokenAddress: contracts.testERC20,
-          tokenSubID: 0n,
-        }]);
-        await refreshBalances();
-        console.log('✅ Transfer scanned and balances updated');
-      } catch (scanError) {
-        console.warn('Background scan failed:', scanError.message);
-      }
-    })();
-    
+    // Scan transaction and refresh balances (must complete before unlocking button)
+    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Updating balances...');
+    await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
+    await walletState.railgunWallet.scanTransaction(result.txHash, recipientAddress, [{
+      tokenType: 0,
+      tokenAddress: contracts.testERC20,
+      tokenSubID: 0n,
+    }]);
+    await refreshBalances();
+    console.log('✅ Transfer scanned and balances updated');
 
   } catch (error) {
     console.error('Transfer failed:', error);

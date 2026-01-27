@@ -149,6 +149,25 @@ function sendJson(res, statusCode, data) {
   res.end(JSON.stringify(data));
 }
 
+// Wait for transaction receipt with fallback polling
+async function waitForReceipt(txHash) {
+  try {
+    return await provider.waitForTransaction(txHash);
+  } catch (waitError) {
+    // Fallback to receipt polling if RPC has issues
+    if (waitError.code === 'SERVER_ERROR') {
+      console.log('   Receipt polling fallback...');
+      for (let i = 0; i < 60; i++) {
+        const receipt = await provider.getTransactionReceipt(txHash).catch(() => null);
+        if (receipt) return receipt;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      throw new Error('Transaction confirmation timeout');
+    }
+    throw waitError;
+  }
+}
+
 // Handle API requests
 async function handleApiRequest(req, res, pathname) {
   // Handle CORS preflight
@@ -187,82 +206,47 @@ async function handleApiRequest(req, res, pathname) {
 
       const railgun = new ethers.Contract(railgunAddress, RAILGUN_ABI, broadcastWallet);
 
-      let tx;
-      let gasLimit;
-
-      if (type === 'shield') {
-        // Estimate gas
-        try {
-          gasLimit = await railgun.estimateGas.shield([transaction]);
-          gasLimit = gasLimit.mul(120).div(100); // Add 20% buffer
-        } catch (e) {
-          console.warn('Gas estimation failed:', e.message);
-          gasLimit = ethers.BigNumber.from(10000000);
-        }
-
-        console.log('   Executing shield...');
-        tx = await railgun.shield([transaction], { gasLimit });
-
-      } else if (type === 'unshield' || type === 'transfer') {
-        // Estimate gas
-        try {
-          gasLimit = await railgun.estimateGas.transact([transaction]);
-          gasLimit = gasLimit.mul(120).div(100);
-        } catch (e) {
-          console.warn('Gas estimation failed:', e.message);
-          gasLimit = ethers.BigNumber.from(10000000);
-        }
-
-        console.log(`   Executing ${type}...`);
-        tx = await railgun.transact([transaction], { gasLimit });
-
-      } else {
-        return sendJson(res, 400, { success: false, error: `Unknown transaction type: ${type}` });
+      // Only unshield and transfer are broadcasted by server
+      if (type !== 'unshield' && type !== 'transfer') {
+        return sendJson(res, 400, { success: false, error: `Invalid transaction type: ${type}` });
       }
 
+      // Estimate gas
+      let gasLimit;
+      try {
+        gasLimit = await railgun.estimateGas.transact([transaction]);
+        gasLimit = gasLimit.mul(120).div(100); // Add 20% buffer
+      } catch (e) {
+        console.warn('Gas estimation failed:', e.message);
+        gasLimit = ethers.BigNumber.from(10000000);
+      }
+
+      // Execute transact transaction
+      console.log(`   Executing ${type}...`);
+      const tx = await railgun.transact([transaction], { gasLimit });
       console.log('   TX Hash:', tx.hash);
 
-      // Update root immediately (non-blocking)
-      railgun.updateRoot({ gasLimit: 700000 })
-        .then(updateRootTx => {
-          console.log('   🔄 UpdateRoot TX sent:', updateRootTx.hash);
-          return updateRootTx.wait();
-        })
-        .then(() => {
-          console.log('   ✅ Root updated');
-        })
-        .catch(updateError => {
-          console.warn('   ⚠️  Root update failed (non-critical):', updateError.message);
-        });
+      // Send updateRoot immediately after (with higher nonce, ensures it executes after transact)
+      const updateRootTx = await railgun.updateRoot({ gasLimit: 700000 }).then(
+        tx => { console.log('   🔄 UpdateRoot TX sent:', tx.hash); return tx; },
+        err => { console.warn('   ⚠️  UpdateRoot send failed:', err.message); return null; }
+      );
 
-      // Wait for main transaction confirmation
+      // Wait for transact confirmation
       console.log('   Waiting for confirmation...');
-      let receipt;
-      try {
-        receipt = await tx.wait();
-      } catch (waitError) {
-        // If RPC has issues (like X Layer DNS error), fallback to receipt polling
-        if (waitError.code === 'SERVER_ERROR') {
-          console.log('   Standard wait failed, using receipt polling...');
-          let attempts = 0;
-          while (!receipt && attempts < 60) {
-            try {
-              receipt = await provider.getTransactionReceipt(tx.hash);
-              if (receipt) break;
-            } catch (err) {
-              // Ignore and retry
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second interval
-            attempts++;
-          }
-          if (!receipt) {
-            throw new Error('Transaction confirmation timeout after 60 seconds');
-          }
-        } else {
-          throw waitError;
+      const receipt = await waitForReceipt(tx.hash);
+      console.log(`   ✅ ${type} confirmed in block:`, receipt.blockNumber);
+
+      // Wait for updateRoot confirmation
+      if (updateRootTx) {
+        try {
+          const updateReceipt = await waitForReceipt(updateRootTx.hash);
+          console.log(`   ✅ Root updated in block: ${updateReceipt.blockNumber}` +
+            (updateReceipt.blockNumber === receipt.blockNumber ? ' 🎯 SAME' : ''));
+        } catch (err) {
+          console.warn('   ⚠️  Root update confirmation failed:', err.message);
         }
       }
-      console.log(`   ✅ ${type} confirmed in block:`, receipt.blockNumber);
 
       return sendJson(res, 200, {
         success: true,
@@ -335,40 +319,17 @@ async function handleApiRequest(req, res, pathname) {
 
       console.log('   Sending updateRoot...');
       const updateRootTx = await railgun.updateRoot({ gasLimit: 700000 });
-      console.log('   🔄 UpdateRoot TX sent:', updateRootTx.hash);
+      console.log('   UpdateRoot TX sent:', updateRootTx.hash);
       
-      // Wait for confirmation in background (with fallback)
-      (async () => {
-        try {
-          let receipt = await updateRootTx.wait();
-          console.log('   ✅ Root updated in block:', receipt.blockNumber);
-        } catch (waitError) {
-          if (waitError.code === 'SERVER_ERROR') {
-            // Fallback to receipt polling
-            let receipt = null;
-            let attempts = 0;
-            while (!receipt && attempts < 60) {
-              try {
-                receipt = await provider.getTransactionReceipt(updateRootTx.hash);
-                if (receipt) {
-                  console.log('   ✅ Root updated in block:', receipt.blockNumber);
-                  break;
-                }
-              } catch (err) {
-                // Ignore and retry
-              }
-              await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second interval
-              attempts++;
-            }
-          } else {
-            console.warn('   ⚠️  Root update confirmation failed:', waitError.message);
-          }
-        }
-      })();
+      // Wait for confirmation before returning (ensures root is updated)
+      console.log('   Waiting for confirmation...');
+      const receipt = await waitForReceipt(updateRootTx.hash);
+      console.log('   ✅ Root updated in block:', receipt.blockNumber);
 
       return sendJson(res, 200, {
         success: true,
-        txHash: updateRootTx.hash
+        txHash: updateRootTx.hash,
+        blockNumber: receipt.blockNumber
       });
 
     } catch (error) {
