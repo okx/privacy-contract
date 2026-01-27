@@ -21,23 +21,10 @@ class DOMCache {
       privateBalanceElements: document.querySelectorAll('.balance-value.private'),
       tokenInfoEl: document.getElementById('erc20-token-info'),
       
-      // Account info
-      accountInfoEl: document.querySelector('.account-info'),
-      accountAddress: document.querySelector('.account-info p'),
-      
-      // MPK section
-      mpkValue: document.querySelector('.mpk-value'),
-      mpkStatus: document.querySelector('.mpk-status'),
-      statusDot: document.querySelector('.status-dot'),
-      statusText: document.querySelector('.status-text'),
-      
-      // MPK lookups
+      // MPK lookups (shield modal only)
       shieldMpk: document.getElementById('shield-mpk'),
       shieldViewPubKey: document.getElementById('shield-viewpubkey'),
       shieldStatus: document.getElementById('shield-status'),
-      transferMpk: document.getElementById('transfer-mpk'),
-      transferViewPubKey: document.getElementById('transfer-viewpubkey'),
-      transferStatus: document.getElementById('transfer-status'),
       
       // History
       historyList: document.querySelector('.history-list'),
@@ -57,8 +44,7 @@ class DOMCache {
   refresh(key) {
     // Refresh specific element if it was removed/recreated
     const selectors = {
-      mpkStatus: '.mpk-status',
-      // Add more as needed
+      // Add as needed
     };
     
     if (selectors[key]) {
@@ -96,80 +82,73 @@ export function updateBalances(state) {
   });
 }
 
+// Account info removed - using Connect button in header instead
 export function updateAccountInfo(state) {
-  const addressEl = domCache.get('accountAddress');
-  if (!addressEl) return;
-  
-  if (state.account) {
-    addressEl.textContent = state.account;
-  } else {
-    addressEl.textContent = 'Not connected';
-  }
+  // No longer needed - account info removed from sidebar
 }
 
+// MPK display removed - using Privacy Mode toggle status instead
 export function updateMPKDisplay(state, derivedKeys) {
-  const mpkValue = domCache.get('mpkValue');
-  const mpkStatus = domCache.get('mpkStatus');
-  const statusDot = domCache.get('statusDot');
-  const statusText = domCache.get('statusText');
-  
-  if (!mpkValue || !mpkStatus) return;
-  
-  // Remove existing register button
-  const existingBtn = mpkStatus.querySelector('.register-btn');
-  if (existingBtn) {
-    existingBtn.remove();
-  }
-  
-  if (state.mpk) {
-    mpkValue.textContent = formatMPK(state.mpk);
-    
-    if (statusDot && statusText) {
-      if (state.isRegistered) {
-        statusDot.className = 'status-dot registered';
-        statusText.textContent = 'Registered on-chain';
-      } else {
-        statusDot.className = 'status-dot unregistered';
-        statusText.textContent = 'Not registered';
-        
-        // Show register button
-        if (state.mpk && derivedKeys.viewingPublicKey) {
-          const registerBtn = document.createElement('button');
-          registerBtn.className = 'register-btn';
-          registerBtn.textContent = 'Register MPK';
-          registerBtn.onclick = () => {
-            window.dispatchEvent(new CustomEvent('register-mpk'));
-          };
-          mpkStatus.appendChild(registerBtn);
-        }
-      }
-    }
-  } else {
-    mpkValue.textContent = 'Connect wallet to generate MPK';
-    if (statusDot) statusDot.className = 'status-dot unregistered';
-    if (statusText) statusText.textContent = state.account ? 'Not connected' : 'Not connected';
-  }
-  
   // Update Shield button state based on registration
   updateShieldButtonState(state.isRegistered);
+  
+  // Update Privacy Mode status
+  updatePrivacyModeStatus(state.isRegistered);
+}
+
+// Update Privacy Mode status in sidebar
+function updatePrivacyModeStatus(isRegistered) {
+  const privacyStatus = document.getElementById('privacy-status');
+  if (!privacyStatus) return;
+  
+  const statusDot = privacyStatus.querySelector('.status-dot');
+  const statusText = privacyStatus.querySelector('.status-text');
+  const privacyToggle = document.getElementById('privacy-mode-toggle');
+  
+  if (!statusDot || !statusText) return;
+  
+  if (isRegistered) {
+    statusDot.classList.remove('unregistered');
+    statusDot.classList.add('registered');
+    
+    if (privacyToggle && privacyToggle.checked) {
+      statusText.textContent = 'Privacy activated';
+    } else {
+      statusText.textContent = 'Ready';
+    }
+  } else {
+    statusDot.classList.remove('registered');
+    statusDot.classList.add('unregistered');
+    
+    if (privacyToggle && privacyToggle.checked) {
+      statusText.textContent = 'Activating...';
+    } else {
+      statusText.textContent = 'Not activated';
+    }
+  }
 }
 
 // Update Shield button enabled/disabled state
 function updateShieldButtonState(isRegistered) {
-  const shieldBtn = document.querySelector('#shield-panel .submit-btn');
-  if (!shieldBtn) return;
+  const shieldBtn = document.getElementById('shield-btn');
+  const sidebarShieldBtn = document.getElementById('sidebar-shield-btn');
+  const sidebarUnshieldBtn = document.getElementById('sidebar-unshield-btn');
   
-  if (isRegistered) {
-    shieldBtn.disabled = false;
-    shieldBtn.style.opacity = '1';
-    shieldBtn.style.cursor = 'pointer';
-    shieldBtn.title = '';
-  } else {
-    shieldBtn.disabled = true;
-    shieldBtn.style.opacity = '0.5';
-    shieldBtn.style.cursor = 'not-allowed';
-    shieldBtn.title = 'Please register your MPK first';
-  }
+  const buttons = [shieldBtn, sidebarShieldBtn, sidebarUnshieldBtn].filter(btn => btn);
+  
+  buttons.forEach(btn => {
+    if (isRegistered) {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.title = '';
+    } else {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+      btn.title = 'Please activate Privacy Mode first';
+    }
+  });
 }
 
 // updateAddressInputs - removed, no longer needed
@@ -223,58 +202,57 @@ export function updateShieldLookup(mpk, viewPubKey, isFound) {
         : viewPubKey;
       viewPubKeyEl.textContent = short;
     }
-    statusEl.textContent = '✓ Registered';
+    statusEl.textContent = '✓ Privacy activated';
     statusEl.className = 'lookup-status found';
   } else {
-    mpkEl.textContent = isFound === null ? 'Connect wallet...' : 'Not registered';
+    mpkEl.textContent = isFound === null ? 'Connect wallet...' : 'Privacy not activated';
     if (viewPubKeyEl) viewPubKeyEl.textContent = '—';
-    statusEl.textContent = isFound === null ? '—' : '✗ Not registered';
+    statusEl.textContent = isFound === null ? '—' : '✗ Privacy not activated';
     statusEl.className = isFound === null ? 'lookup-status' : 'lookup-status not-found';
   }
 }
 
 export function updateTransferLookup(mpk, viewPubKey, isFound) {
-  const mpkEl = domCache.get('transferMpk');
-  const viewPubKeyEl = domCache.get('transferViewPubKey');
-  const statusEl = domCache.get('transferStatus');
+  const statusDot = document.getElementById('transfer-status-dot');
+  const statusHint = document.getElementById('transfer-status-hint');
   
-  if (!mpkEl || !statusEl) return;
+  if (!statusDot || !statusHint) return;
   
-  if (isFound && mpk) {
-    mpkEl.textContent = formatMPK(mpk);
-    if (viewPubKeyEl && viewPubKey) {
-      const short = viewPubKey.length > 20 
-        ? viewPubKey.slice(0, 18) + '...' + viewPubKey.slice(-8)
-        : viewPubKey;
-      viewPubKeyEl.textContent = short;
-    }
-    statusEl.textContent = '✓ Found';
-    statusEl.className = 'lookup-status found';
+  if (isFound === 'checking') {
+    // Checking state
+    statusDot.className = 'status-dot checking';
+    statusHint.textContent = 'Checking...';
+    statusHint.className = 'status-hint';
+  } else if (isFound && mpk) {
+    // Privacy activated
+    statusDot.className = 'status-dot registered';
+    statusHint.textContent = 'Privacy activated ✓';
+    statusHint.className = 'status-hint found';
     updateTransferButtonState(true);
   } else if (isFound === false) {
-    mpkEl.textContent = 'Not registered';
-    if (viewPubKeyEl) viewPubKeyEl.textContent = '—';
-    statusEl.textContent = '✗ Not found';
-    statusEl.className = 'lookup-status not-found';
+    // Privacy not activated
+    statusDot.className = 'status-dot unregistered';
+    statusHint.textContent = 'Privacy not activated ✗';
+    statusHint.className = 'status-hint not-found';
     updateTransferButtonState(false);
   } else if (isFound === 'invalid') {
-    mpkEl.textContent = 'Invalid address';
-    if (viewPubKeyEl) viewPubKeyEl.textContent = '—';
-    statusEl.textContent = 'Invalid';
-    statusEl.className = 'lookup-status not-found';
+    // Invalid address
+    statusDot.className = 'status-dot unregistered';
+    statusHint.textContent = 'Invalid address';
+    statusHint.className = 'status-hint not-found';
     updateTransferButtonState(false);
   } else {
-    mpkEl.textContent = 'Waiting for address...';
-    if (viewPubKeyEl) viewPubKeyEl.textContent = '—';
-    statusEl.textContent = '—';
-    statusEl.className = 'lookup-status';
+    // Reset state
+    statusDot.className = 'status-dot';
+    statusHint.textContent = 'Check privacy status';
+    statusHint.className = 'status-hint';
     updateTransferButtonState(false);
   }
 }
 
 // Update Transfer button enabled/disabled state
 function updateTransferButtonState(recipientRegistered) {
-  const transferBtn = document.querySelector('#transfer-panel .submit-btn');
+  const transferBtn = document.getElementById('private-transfer-btn');
   if (!transferBtn) return;
   
   if (recipientRegistered) {
@@ -448,15 +426,13 @@ export function showTransactionList(transactions) {
 export function switchTab(tabName) {
   // Update tabs
   document.querySelectorAll('.tab').forEach(tab => {
-    tab.classList.remove('active', 'shield', 'unshield', 'transfer', 'transactions');
+    tab.classList.remove('active', 'transfer', 'transactions');
   });
   
   // Find and activate tab
   const tabButton = Array.from(document.querySelectorAll('.tab')).find(btn => 
     btn.textContent.includes(
-      tabName === 'shield' ? '🛡️' : 
-      tabName === 'unshield' ? '📤' : 
-      tabName === 'transfer' ? '🔄' : 
+      tabName === 'transfer' ? '💸' : 
       tabName === 'transactions' ? '📋' : ''
     )
   );

@@ -290,6 +290,7 @@ async function generateMPK() {
 async function checkRegistrationStatus() {
   if (!state.provider || !state.account || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
     state.isRegistered = false;
+    await autoSetPrivacyMode(false, false);
     return;
   }
 
@@ -307,25 +308,64 @@ async function checkRegistrationStatus() {
       
       if (allowance.eq(0)) {
         console.log('⚠️ Token not approved (allowance = 0), auto-triggering approval...');
+        // Set privacy mode to false temporarily
+        await autoSetPrivacyMode(true, false);
+        
         try {
           const testERC20Signer = testERC20.connect(state.signer);
           const approveTx = await testERC20Signer.approve(contracts.railgun, ethersLib.constants.MaxUint256);
           await approveTx.wait();
           console.log('✅ Token approved');
+          
+          // After successful approval, enable privacy mode
+          await autoSetPrivacyMode(true, true);
         } catch (approveError) {
           if (approveError.code === 4001) {
             console.warn('⚠️ Token approval cancelled by user');
           } else {
             console.warn('⚠️ Token approval failed:', approveError.message);
           }
+          // Approval failed, keep privacy mode off
+          await autoSetPrivacyMode(true, false);
         }
       } else {
         console.log('✅ Token already approved. Allowance:', ethersLib.utils.formatUnits(allowance, 18));
+        // Fully activated: registered + approved, enable privacy mode
+        await autoSetPrivacyMode(true, true);
       }
+    } else if (!state.isRegistered) {
+      // Not registered, disable privacy mode
+      await autoSetPrivacyMode(false, false);
     }
   } catch (error) {
     console.warn('Failed to check registration status:', error);
     state.isRegistered = false;
+    await autoSetPrivacyMode(false, false);
+  }
+}
+
+// Auto set privacy mode based on activation status
+async function autoSetPrivacyMode(isRegistered, isApproved) {
+  const privacyToggle = document.getElementById('privacy-mode-toggle');
+  if (!privacyToggle) return;
+  
+  const shouldEnable = isRegistered && isApproved;
+  
+  // Only update if different from current state
+  if (privacyToggle.checked !== shouldEnable) {
+    privacyToggle.checked = shouldEnable;
+    
+    // Trigger the change event to update UI
+    const event = new Event('change', { bubbles: true });
+    privacyToggle.dispatchEvent(event);
+    
+    if (shouldEnable) {
+      console.log('✅ Privacy mode enabled automatically (registered + approved)');
+    } else if (isRegistered && !isApproved) {
+      console.log('⚠️ Privacy mode disabled (waiting for approval)');
+    } else {
+      console.log('ℹ️ Privacy mode disabled (not registered)');
+    }
   }
 }
 
@@ -347,7 +387,6 @@ export async function registerMPK() {
   }
 
   const ethersLib = ensureEthers();
-  UI.setButtonLoading('.register-btn', true, 'Registering...');
 
   try {
     const registry = new ethersLib.Contract(contracts.mpkRegistry, CONFIG.MPK_REGISTRY_ABI, state.signer);
@@ -374,14 +413,17 @@ export async function registerMPK() {
       const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
       await approveTx.wait();
       console.log('✅ Token approved. You can now Shield without additional approvals.');
+      
+      // Enable privacy mode after successful registration and approval
+      await autoSetPrivacyMode(true, true);
     } catch (approveError) {
       console.warn('⚠️ Token approval failed:', approveError.message);
+      // Registration succeeded but approval failed, keep privacy mode off
+      await autoSetPrivacyMode(true, false);
     }
     
   } catch (error) {
     console.error('Registration failed:', error);
-  } finally {
-    UI.setButtonLoading('.register-btn', false);
   }
 }
 
@@ -539,7 +581,10 @@ export async function handleTransferLookup(address) {
     return;
   }
   
-  // Valid address format - trigger lookup
+  // Valid address format - show checking state
+  UI.updateTransferLookup(null, null, 'checking');
+  
+  // Trigger lookup
   console.log('Looking up MPK for:', address);
   const userInfo = await lookupMPK(address);
   if (userInfo) {
@@ -554,7 +599,7 @@ function retriggerTransferLookup() {
   // Check if currently on transfer tab
   const transferPanel = document.getElementById('transfer-panel');
   if (transferPanel && transferPanel.classList.contains('active')) {
-    const transferAddressInput = document.querySelector('#transfer-panel .form-input');
+    const transferAddressInput = document.getElementById('private-recipient');
     if (transferAddressInput) {
       const address = transferAddressInput.value.trim();
       // Only lookup if address exists and has valid format

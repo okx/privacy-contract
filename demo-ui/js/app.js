@@ -1,6 +1,6 @@
 // Main Application Entry Point
 import { loadContractConfig, connectWallet, registerMPK, setupProviderListeners, handleTransferLookup, walletState, refreshBalances } from './wallet.js';
-import { handleShield, handleUnshield, handleTransfer } from './transactions.js';
+import { handleShield, handleUnshield, handleTransfer, handleERC20Transfer } from './transactions.js';
 import * as UI from './ui.js';
 import { waitForLibrary, debounce, copyToClipboard } from './utils.js';
 
@@ -48,73 +48,125 @@ class PrivacyWalletApp {
       connectBtn.addEventListener('click', () => connectWallet());
     }
 
-    // Submit buttons
-    const shieldBtn = document.querySelector('#shield-panel .submit-btn');
-    const unshieldBtn = document.querySelector('#unshield-panel .submit-btn');
-    const transferBtn = document.querySelector('#transfer-panel .submit-btn');
+    // Privacy mode toggle
+    const privacyToggle = document.getElementById('privacy-mode-toggle');
+    if (privacyToggle) {
+      privacyToggle.addEventListener('change', (e) => {
+        this.handlePrivacyModeToggle(e.target.checked);
+      });
+    }
+
+    // Shield/Unshield sidebar buttons
+    const sidebarShieldBtn = document.getElementById('sidebar-shield-btn');
+    const sidebarUnshieldBtn = document.getElementById('sidebar-unshield-btn');
     
+    if (sidebarShieldBtn) {
+      sidebarShieldBtn.addEventListener('click', () => this.openModal('shield'));
+    }
+    
+    if (sidebarUnshieldBtn) {
+      sidebarUnshieldBtn.addEventListener('click', () => this.openModal('unshield'));
+    }
+
+    // Modal close buttons
+    const shieldModalClose = document.getElementById('shield-modal-close');
+    const unshieldModalClose = document.getElementById('unshield-modal-close');
+    
+    if (shieldModalClose) {
+      shieldModalClose.addEventListener('click', () => this.closeModal('shield'));
+    }
+    
+    if (unshieldModalClose) {
+      unshieldModalClose.addEventListener('click', () => this.closeModal('unshield'));
+    }
+
+    // Close modal when clicking outside
+    document.getElementById('shield-modal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'shield-modal') {
+        this.closeModal('shield');
+      }
+    });
+    
+    document.getElementById('unshield-modal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'unshield-modal') {
+        this.closeModal('unshield');
+      }
+    });
+
+    // Submit buttons
+    const erc20TransferBtn = document.getElementById('erc20-transfer-btn');
+    const privateTransferBtn = document.getElementById('private-transfer-btn');
+    const shieldBtn = document.getElementById('shield-btn');
+    const unshieldBtn = document.getElementById('unshield-btn');
+    
+    if (erc20TransferBtn) {
+      erc20TransferBtn.addEventListener('click', () => {
+        const recipientInput = document.getElementById('erc20-recipient');
+        const amountInput = document.getElementById('erc20-amount');
+        handleERC20Transfer(recipientInput.value.trim(), amountInput.value.trim());
+      });
+    }
+
+    if (privateTransferBtn) {
+      privateTransferBtn.addEventListener('click', () => {
+        const recipientInput = document.getElementById('private-recipient');
+        const amountInput = document.getElementById('private-amount');
+        handleTransfer(recipientInput.value.trim(), amountInput.value.trim());
+      });
+    }
+
     if (shieldBtn) {
       shieldBtn.addEventListener('click', () => {
-        const amountInput = document.querySelector('#shield-panel .form-input');
+        const amountInput = document.getElementById('shield-amount');
         handleShield(amountInput.value.trim());
       });
     }
 
     if (unshieldBtn) {
       unshieldBtn.addEventListener('click', () => {
-        const amountInput = document.querySelector('#unshield-panel .form-input');
+        const amountInput = document.getElementById('unshield-amount');
         handleUnshield(amountInput.value.trim());
-      });
-    }
-
-    if (transferBtn) {
-      transferBtn.addEventListener('click', () => {
-        const recipientInput = document.querySelector('#transfer-panel .form-input');
-        const amountInput = document.querySelectorAll('#transfer-panel .form-input')[1];
-        handleTransfer(recipientInput.value.trim(), amountInput.value.trim());
       });
     }
 
     // MAX buttons
     document.querySelectorAll('.max-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const panel = e.target.closest('.panel-content');
+        const mode = e.target.dataset.mode;
         
-        let amountInput;
-        if (panel.id === 'shield-panel' || panel.id === 'unshield-panel') {
-          amountInput = panel.querySelector('.form-input');
-        } else {
-          amountInput = panel.querySelectorAll('.form-input')[1];
-        }
-        
-        if (panel.id === 'shield-panel') {
+        if (mode === 'erc20') {
+          const amountInput = document.getElementById('erc20-amount');
           amountInput.value = walletState.publicBalance;
-        } else {
+        } else if (mode === 'private') {
+          const amountInput = document.getElementById('private-amount');
+          amountInput.value = walletState.privateBalance;
+        } else if (mode === 'shield') {
+          const amountInput = document.getElementById('shield-amount');
+          amountInput.value = walletState.publicBalance;
+        } else if (mode === 'unshield') {
+          const amountInput = document.getElementById('unshield-amount');
           amountInput.value = walletState.privateBalance;
         }
       });
     });
 
-    // Transfer address input with debounced lookup
-    const transferAddressInput = document.querySelector('#transfer-panel .form-input');
-    if (transferAddressInput) {
+    // Private transfer address input with debounced lookup
+    const privateRecipientInput = document.getElementById('private-recipient');
+    if (privateRecipientInput) {
       const debouncedLookup = debounce((address) => {
-        // Only lookup if address is not empty and looks like valid format
         if (!address) {
           handleTransferLookup(null);
           return;
         }
         
-        // Basic format check (0x + 40 hex chars)
         if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
-          // Invalid format, don't trigger lookup yet (user might still typing)
           return;
         }
         
         handleTransferLookup(address);
       }, 500);
 
-      transferAddressInput.addEventListener('input', (e) => {
+      privateRecipientInput.addEventListener('input', (e) => {
         debouncedLookup(e.target.value.trim());
       });
     }
@@ -123,9 +175,8 @@ class PrivacyWalletApp {
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', (e) => {
         const tabText = e.target.textContent;
-        let tabName = 'shield';
-        if (tabText.includes('📤')) tabName = 'unshield';
-        else if (tabText.includes('🔄')) tabName = 'transfer';
+        let tabName = 'transfer';
+        if (tabText.includes('💸')) tabName = 'transfer';
         else if (tabText.includes('📋')) tabName = 'transactions';
         
         UI.switchTab(tabName);
@@ -158,10 +209,9 @@ class PrivacyWalletApp {
 
     // Handle transfer tab opened event
     window.addEventListener('transfer-tab-opened', () => {
-      const transferAddressInput = document.querySelector('#transfer-panel .form-input');
-      if (transferAddressInput) {
-        const address = transferAddressInput.value.trim();
-        // Only lookup if address exists and has valid format
+      const privateRecipientInput = document.getElementById('private-recipient');
+      if (privateRecipientInput) {
+        const address = privateRecipientInput.value.trim();
         if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
           handleTransferLookup(address);
         }
@@ -174,6 +224,68 @@ class PrivacyWalletApp {
         refreshBalances();
       }
     }, 30000);
+  }
+
+  handlePrivacyModeToggle(isEnabled) {
+    const erc20Form = document.getElementById('erc20-transfer-form');
+    const privateForm = document.getElementById('private-transfer-form');
+    const privacyStatus = document.getElementById('privacy-status');
+    
+    if (isEnabled) {
+      // Switch to private mode
+      erc20Form.style.display = 'none';
+      privateForm.style.display = 'block';
+      
+      // Update status display
+      if (privacyStatus) {
+        const statusDot = privacyStatus.querySelector('.status-dot');
+        const statusText = privacyStatus.querySelector('.status-text');
+        
+        if (walletState.isRegistered) {
+          statusDot.classList.remove('unregistered');
+          statusDot.classList.add('registered');
+          statusText.textContent = 'Privacy activated';
+        } else {
+          statusDot.classList.remove('registered');
+          statusDot.classList.add('unregistered');
+          statusText.textContent = 'Activating...';
+        }
+      }
+      
+      // Check if user needs to register
+      if (walletState.account && !walletState.isRegistered) {
+        console.log('Privacy mode enabled, but MPK not registered. Prompting registration...');
+        // Trigger registration flow
+        window.dispatchEvent(new CustomEvent('register-mpk'));
+      }
+    } else {
+      // Switch to ERC20 mode
+      erc20Form.style.display = 'block';
+      privateForm.style.display = 'none';
+      
+      // Update status display
+      if (privacyStatus) {
+        const statusDot = privacyStatus.querySelector('.status-dot');
+        const statusText = privacyStatus.querySelector('.status-text');
+        statusDot.classList.remove('registered');
+        statusDot.classList.add('unregistered');
+        statusText.textContent = 'Privacy disabled';
+      }
+    }
+  }
+
+  openModal(type) {
+    const modal = document.getElementById(`${type}-modal`);
+    if (modal) {
+      modal.classList.add('active');
+    }
+  }
+
+  closeModal(type) {
+    const modal = document.getElementById(`${type}-modal`);
+    if (modal) {
+      modal.classList.remove('active');
+    }
   }
 }
 

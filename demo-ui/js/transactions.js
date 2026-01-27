@@ -143,7 +143,7 @@ export async function handleShield(amountValue) {
   }
 
   const ethersLib = ensureEthers();
-  UI.setButtonLoading('#shield-panel .submit-btn', true, 'Shielding...');
+  UI.setButtonLoading('#shield-btn', true, 'Shielding...');
   let shieldTx = null;
 
   try {
@@ -258,7 +258,7 @@ export async function handleShield(amountValue) {
     }
     
   } finally {
-    UI.setButtonLoading('#shield-panel .submit-btn', false);
+    UI.setButtonLoading('#shield-btn', false);
   }
 }
 
@@ -297,12 +297,12 @@ export async function handleUnshield(amountValue) {
     return;
   }
 
-  UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Sign to confirm...');
+  UI.setButtonLoading('#unshield-btn', true, 'Sign to confirm...');
 
   try {
     await requestSignatureConfirmation();
     
-    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Preparing...');
+    UI.setButtonLoading('#unshield-btn', true, 'Preparing...');
     const recipient = walletState.account;
 
     // Prepare unshield transaction
@@ -334,14 +334,14 @@ export async function handleUnshield(amountValue) {
     const formattedTransaction = formatTransactionForContract(transaction);
 
     // Broadcast via server
-    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Broadcasting...');
+    UI.setButtonLoading('#unshield-btn', true, 'Broadcasting...');
     const result = await broadcast('unshield', formattedTransaction);
     
     // Add pending transaction
     addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
 
     // Wait for transaction confirmation
-    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Confirming...');
+    UI.setButtonLoading('#unshield-btn', true, 'Confirming...');
     const receipt = await walletState.provider.waitForTransaction(result.txHash);
     
     if (receipt.status === 0) {
@@ -353,7 +353,7 @@ export async function handleUnshield(amountValue) {
     updateTransactionStatus(result.txHash, 'success', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`);
 
     // Scan transaction and refresh balances (must complete before unlocking button)
-    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Updating balances...');
+    UI.setButtonLoading('#unshield-btn', true, 'Updating balances...');
     await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
     await refreshBalances();
     console.log('✅ Unshield scanned and balances updated');
@@ -361,7 +361,78 @@ export async function handleUnshield(amountValue) {
   } catch (error) {
     console.error('Unshield failed:', error);
   } finally {
-    UI.setButtonLoading('#unshield-panel .submit-btn', false);
+    UI.setButtonLoading('#unshield-btn', false);
+  }
+}
+
+// ERC20 Transfer function (non-private)
+export async function handleERC20Transfer(recipientAddress, amountValue) {
+  console.log('ERC20 Transfer button clicked, recipient:', recipientAddress, 'amount:', amountValue);
+  
+  if (!walletState.signer || !walletState.account) {
+    console.error('ERC20 Transfer failed: Wallet not connected');
+    return;
+  }
+
+  try {
+    validateAmount(amountValue);
+  } catch (error) {
+    console.error('ERC20 Transfer failed: Invalid amount -', error.message);
+    return;
+  }
+
+  const ethersLib = ensureEthers();
+  
+  if (!ethersLib.utils.isAddress(recipientAddress)) {
+    console.error('ERC20 Transfer failed: Invalid recipient address -', recipientAddress);
+    return;
+  }
+
+  UI.setButtonLoading('#erc20-transfer-btn', true, 'Transferring...');
+  let erc20Tx = null;
+
+  try {
+    const amountWei = ethersLib.utils.parseEther(amountValue);
+    
+    // Check balance
+    const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, walletState.signer);
+    const balance = await testERC20.balanceOf(walletState.account);
+
+    if (balance.lt(amountWei)) {
+      console.error('ERC20 Transfer failed: Insufficient balance. Have:', ethersLib.utils.formatEther(balance), 'Need:', amountValue);
+      return;
+    }
+
+    // Send ERC20 transfer
+    erc20Tx = await testERC20.transfer(recipientAddress, amountWei);
+    const { formatAddress } = await import('./utils.js');
+    addTransaction('erc20', 'ERC20 Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, erc20Tx.hash, 'pending');
+    
+    const receipt = await erc20Tx.wait();
+    
+    if (receipt.status === 0) {
+      updateTransactionStatus(erc20Tx.hash, 'failed', 'ERC20 Transfer', `Transfer reverted`);
+      throw new Error('Transaction reverted');
+    }
+
+    // Update UI
+    updateTransactionStatus(erc20Tx.hash, 'success', 'ERC20 Transfer', `To ${formatAddress(recipientAddress)}`);
+    
+    // Refresh balances
+    await refreshBalances();
+    console.log('✅ ERC20 Transfer successful');
+
+  } catch (error) {
+    console.error('ERC20 Transfer failed:', error);
+    
+    let txHash = erc20Tx?.hash || error.transaction?.hash || error.receipt?.transactionHash;
+    
+    if (txHash) {
+      updateTransactionStatus(txHash, 'failed', 'ERC20 Transfer', `Failed to transfer ${amountValue} ${erc20TokenInfo.symbol}`);
+    }
+    
+  } finally {
+    UI.setButtonLoading('#erc20-transfer-btn', false);
   }
 }
 
@@ -398,8 +469,8 @@ export async function handleTransfer(recipientAddress, amountValue) {
   const userInfo = await lookupMPK(recipientAddress);
   
   if (!userInfo) {
-    console.error('Recipient MPK not found');
-    alert('Recipient has not registered their MPK. They need to connect and register first.');
+    console.error('Recipient privacy not activated');
+    alert('Recipient has not activated privacy mode. They need to connect and activate privacy first.');
     return;
   }
 
@@ -415,12 +486,12 @@ export async function handleTransfer(recipientAddress, amountValue) {
     return;
   }
 
-  UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Sign to confirm...');
+  UI.setButtonLoading('#private-transfer-btn', true, 'Sign to confirm...');
 
   try {
     await requestSignatureConfirmation();
     
-    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Preparing...');
+    UI.setButtonLoading('#private-transfer-btn', true, 'Preparing...');
 
     const transferData = await walletState.railgunWallet.prepareTransferTransaction(
       walletState.account,
@@ -453,7 +524,7 @@ export async function handleTransfer(recipientAddress, amountValue) {
     const formattedTransaction = formatTransactionForContract(transaction);
 
     // Broadcast via server
-    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Broadcasting...');
+    UI.setButtonLoading('#private-transfer-btn', true, 'Broadcasting...');
     const result = await broadcast('transfer', formattedTransaction);
     
     const { formatAddress } = await import('./utils.js');
@@ -461,7 +532,7 @@ export async function handleTransfer(recipientAddress, amountValue) {
     addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
 
     // Wait for transaction confirmation
-    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Confirming...');
+    UI.setButtonLoading('#private-transfer-btn', true, 'Confirming...');
     const receipt = await walletState.provider.waitForTransaction(result.txHash);
     
     if (receipt.status === 0) {
@@ -473,7 +544,7 @@ export async function handleTransfer(recipientAddress, amountValue) {
     updateTransactionStatus(result.txHash, 'success', 'Private Transfer', `To ${formatAddress(recipientAddress)}`);
 
     // Scan transaction and refresh balances (must complete before unlocking button)
-    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Updating balances...');
+    UI.setButtonLoading('#private-transfer-btn', true, 'Updating balances...');
     await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
     await walletState.railgunWallet.scanTransaction(result.txHash, recipientAddress, [{
       tokenType: 0,
@@ -486,6 +557,6 @@ export async function handleTransfer(recipientAddress, amountValue) {
   } catch (error) {
     console.error('Transfer failed:', error);
   } finally {
-    UI.setButtonLoading('#transfer-panel .submit-btn', false);
+    UI.setButtonLoading('#private-transfer-btn', false);
   }
 }
