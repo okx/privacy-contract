@@ -106,7 +106,8 @@ const mimeTypes = {
 const RAILGUN_ABI = [
   'function shield(tuple(tuple(bytes32 npk, tuple(uint8 tokenType, address tokenAddress, uint256 tokenSubID) token, uint120 value) preimage, tuple(bytes32[3] encryptedBundle, bytes32 shieldKey) ciphertext)[] _shieldRequests) external',
   'function transact(tuple(tuple(tuple(uint256 x, uint256 y) a, tuple(uint256[2] x, uint256[2] y) b, tuple(uint256 x, uint256 y) c) proof, bytes32 merkleRoot, bytes32[] nullifiers, bytes32[] commitments, tuple(uint16 treeNumber, uint72 minGasPrice, uint8 unshield, uint64 chainID, address adaptContract, bytes32 adaptParams, tuple(bytes32[4] ciphertext, bytes32 blindedSenderViewingKey, bytes32 blindedReceiverViewingKey, bytes annotationData, bytes memo)[] commitmentCiphertext) boundParams, tuple(bytes32 npk, tuple(uint8 tokenType, address tokenAddress, uint256 tokenSubID) token, uint120 value) unshieldPreimage)[] _transactions) external',
-  'function updateRoot() external'
+  'function updateRoot() external',
+  'function isRootUpdated() external view returns (bool)'
 ];
 
 // Load deployments.json
@@ -211,6 +212,15 @@ async function handleApiRequest(req, res, pathname) {
         return sendJson(res, 400, { success: false, error: `Invalid transaction type: ${type}` });
       }
 
+      // Check if root needs updating first
+      const isRootUpdated = await railgun.isRootUpdated();
+      if (!isRootUpdated) {
+        console.log('   ⚠️  Root not updated, sending updateRoot first...');
+        const updateRootTx = await railgun.updateRoot({ gasLimit: 700000 });
+        console.log('   🔄 UpdateRoot TX sent:', updateRootTx.hash, '(will be confirmed before transact)');
+        // Don't wait - next transaction will have higher nonce, ensuring updateRoot executes first
+      }
+
       // Estimate gas
       let gasLimit;
       try {
@@ -218,7 +228,7 @@ async function handleApiRequest(req, res, pathname) {
         gasLimit = gasLimit.mul(120).div(100); // Add 20% buffer
       } catch (e) {
         console.warn('Gas estimation failed:', e.message);
-        gasLimit = ethers.BigNumber.from(10000000);
+        gasLimit = ethers.BigNumber.from(1000000);
       }
 
       // Execute transact transaction
@@ -226,33 +236,22 @@ async function handleApiRequest(req, res, pathname) {
       const tx = await railgun.transact([transaction], { gasLimit });
       console.log('   TX Hash:', tx.hash);
 
-      // Send updateRoot immediately after (with higher nonce, ensures it executes after transact)
-      const updateRootTx = await railgun.updateRoot({ gasLimit: 700000 }).then(
-        tx => { console.log('   🔄 UpdateRoot TX sent:', tx.hash); return tx; },
-        err => { console.warn('   ⚠️  UpdateRoot send failed:', err.message); return null; }
-      );
-
-      // Wait for transact confirmation
-      console.log('   Waiting for confirmation...');
-      const receipt = await waitForReceipt(tx.hash);
-      console.log(`   ✅ ${type} confirmed in block:`, receipt.blockNumber);
-
-      // Wait for updateRoot confirmation
-      if (updateRootTx) {
-        try {
-          const updateReceipt = await waitForReceipt(updateRootTx.hash);
-          console.log(`   ✅ Root updated in block: ${updateReceipt.blockNumber}` +
-            (updateReceipt.blockNumber === receipt.blockNumber ? ' 🎯 SAME' : ''));
-        } catch (err) {
-          console.warn('   ⚠️  Root update confirmation failed:', err.message);
-        }
-      }
-
-      return sendJson(res, 200, {
+      // Return txHash immediately to frontend (don't wait for anything)
+      sendJson(res, 200, {
         success: true,
         txHash: tx.hash,
-        blockNumber: receipt.blockNumber
+        pending: true
       });
+
+      // Wait for confirmation in background (for logging only)
+      console.log('   Waiting for confirmation...');
+      waitForReceipt(tx.hash).then(receipt => {
+        console.log(`   ✅ ${type} confirmed in block:`, receipt.blockNumber);
+      }).catch(error => {
+        console.error(`   ❌ ${type} confirmation failed:`, error.message);
+      });
+      
+      return;
 
     } catch (error) {
       console.error('   ❌ Broadcast failed:', error.message);

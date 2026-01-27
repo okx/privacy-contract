@@ -220,9 +220,6 @@ export async function handleShield(amountValue) {
     addTransaction('shield', 'Shield', `Shielding ${amountValue} ${erc20TokenInfo.symbol}`, `+${amountValue} ${erc20TokenInfo.symbol}`, shieldTx.hash, 'pending');
     
     const receipt = await shieldTx.wait();
-    
-    // 2. After shield confirmed, send updateRoot and wait for confirmation
-    await requestUpdateRoot();
 
     // Update UI immediately
     updateTransactionStatus(shieldTx.hash, 'success', 'Shield', `Shielded ${amountValue} ${erc20TokenInfo.symbol}`);
@@ -340,8 +337,20 @@ export async function handleUnshield(amountValue) {
     UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Broadcasting...');
     const result = await broadcast('unshield', formattedTransaction);
     
-    // Broadcast returns only when confirmed, so add as success directly
-    addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
+    // Add pending transaction
+    addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
+
+    // Wait for transaction confirmation
+    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Confirming...');
+    const receipt = await walletState.provider.waitForTransaction(result.txHash);
+    
+    if (receipt.status === 0) {
+      updateTransactionStatus(result.txHash, 'failed', 'Unshield', `Unshield reverted`);
+      throw new Error('Transaction reverted');
+    }
+    
+    // Update to success
+    updateTransactionStatus(result.txHash, 'success', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`);
 
     // Scan transaction and refresh balances (must complete before unlocking button)
     UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Updating balances...');
@@ -448,8 +457,20 @@ export async function handleTransfer(recipientAddress, amountValue) {
     const result = await broadcast('transfer', formattedTransaction);
     
     const { formatAddress } = await import('./utils.js');
-    // Broadcast returns only when confirmed, so add as success directly
-    addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
+    // Add pending transaction
+    addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
+
+    // Wait for transaction confirmation
+    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Confirming...');
+    const receipt = await walletState.provider.waitForTransaction(result.txHash);
+    
+    if (receipt.status === 0) {
+      updateTransactionStatus(result.txHash, 'failed', 'Private Transfer', `Transfer reverted`);
+      throw new Error('Transaction reverted');
+    }
+    
+    // Update to success
+    updateTransactionStatus(result.txHash, 'success', 'Private Transfer', `To ${formatAddress(recipientAddress)}`);
 
     // Scan transaction and refresh balances (must complete before unlocking button)
     UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Updating balances...');
