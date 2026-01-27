@@ -1,14 +1,14 @@
-// 工具函数
+// Utility Functions
 
-// 确保 ethers 库已加载
+// Ensure ethers library is loaded
 export function ensureEthers() {
   if (typeof ethers === 'undefined') {
-    throw new Error('ethers 库未加载');
+    throw new Error('ethers library not loaded');
   }
   return ethers;
 }
 
-// 获取 MetaMask provider
+// Get MetaMask provider
 export function getMetaMaskProvider() {
   if (typeof window.ethereum === 'undefined') {
     return null;
@@ -21,26 +21,26 @@ export function getMetaMaskProvider() {
   return window.ethereum;
 }
 
-// 格式化地址（缩短显示）
+// Format address (shortened display)
 export function formatAddress(address) {
   if (!address) return '';
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-// 格式化 MPK（缩短显示）
+// Format MPK (shortened display)
 export function formatMPK(mpk) {
   if (!mpk) return '';
   return `${mpk.slice(0, 18)}...${mpk.slice(-8)}`;
 }
 
-// 格式化余额
+// Format balance
 export function formatBalance(balance, decimals = 2) {
   const num = parseFloat(balance);
   if (isNaN(num)) return '0.00';
   return num.toFixed(decimals);
 }
 
-// 验证金额
+// Validate amount
 export function validateAmount(amount) {
   if (!amount || amount.trim() === '') {
     throw new Error('请输入金额');
@@ -54,7 +54,7 @@ export function validateAmount(amount) {
   return true;
 }
 
-// 获取时间差描述
+// Get time ago description
 export function getTimeAgo(timestamp) {
   if (!timestamp) return '';
   
@@ -72,7 +72,7 @@ export function getTimeAgo(timestamp) {
   return '刚刚';
 }
 
-// 本地存储工具
+// Local Storage Utility
 export const storage = {
   get(key, defaultValue = null) {
     try {
@@ -87,7 +87,7 @@ export const storage = {
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (error) {
-      console.warn('存储失败:', error);
+      console.warn('Storage failed:', error);
     }
   },
   
@@ -95,7 +95,7 @@ export const storage = {
     try {
       localStorage.removeItem(key);
     } catch (error) {
-      console.warn('删除失败:', error);
+      console.warn('Delete failed:', error);
     }
   },
   

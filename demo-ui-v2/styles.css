@@ -643,6 +643,18 @@ body {
   box-shadow: 0 0 0 4px var(--accent-green-dim);
 }
 
+/* Override browser autofill styles for modal input */
+.modal-input:-webkit-autofill,
+.modal-input:-webkit-autofill:hover,
+.modal-input:-webkit-autofill:focus,
+.modal-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px var(--bg-dark) inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  background-color: var(--bg-dark) !important;
+  caret-color: var(--text-primary);
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 .modal-input-suffix {
   position: absolute;
   right: 20px;

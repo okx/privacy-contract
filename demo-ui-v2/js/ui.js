@@ -1,8 +1,8 @@
-// UI 更新模块
+// UI Update Module
 import { formatAddress, formatBalance, getTimeAgo } from './utils.js';
 import { erc20TokenInfo, CONFIG } from './config.js';
 
-// DOM 缓存
+// DOM Cache
 const dom = {
   connectBtn: () => document.getElementById('connect-btn'),
   accountAddress: () => document.getElementById('account-address'),
@@ -14,16 +14,16 @@ const dom = {
   privateBalance: () => document.getElementById('private-balance'),
   historyList: () => document.getElementById('history-list'),
   
-  // 余额转换（Modal 单按钮）
+  // Balance Convert (Modal single button)
   convertModal: () => document.getElementById('convert-modal'),
   convertActionBtn: () => document.getElementById('convert-action-btn'),
   convertAmount: () => document.getElementById('convert-amount'),
   
-  // 转账 - 滑动开关
+  // Transfer - Toggle Switch
   balanceToggleInput: () => document.getElementById('balance-toggle-input'),
   toggleCurrentBalance: () => document.getElementById('toggle-current-balance'),
   
-  // 转账
+  // Transfer
   transferAddress: () => document.getElementById('transfer-address'),
   transferAmount: () => document.getElementById('transfer-amount'),
   transferSuffix: () => document.getElementById('transfer-suffix'),
@@ -31,15 +31,15 @@ const dom = {
   transferRecipientStatus: () => document.getElementById('transfer-recipient-status'),
   transferHint: () => document.getElementById('transfer-hint'),
   
-  // 交易详情
+  // Transaction Details
   transactionDetailsCard: () => document.getElementById('transaction-details-card'),
   transactionDetailsContent: () => document.getElementById('transaction-details-content'),
 };
 
-// 当前状态
-let currentTransferType = 'public'; // 或 'private'
+// Current State
+let currentTransferType = 'public'; // 'public' or 'private'
 
-// 更新连接按钮
+// Update Connect Button
 export function updateConnectButton(state) {
   const btn = dom.connectBtn();
   if (!btn) return;
@@ -53,14 +53,14 @@ export function updateConnectButton(state) {
   }
 }
 
-// 更新账户信息
+// Update Account Info
 export function updateAccountInfo(state) {
   const addressEl = dom.accountAddress();
   if (addressEl) {
     addressEl.textContent = state.account || '未连接';
   }
   
-  // 更新隐私开关
+  // Update privacy toggle
   const toggle = dom.privacyToggle();
   const statusEl = dom.privacyStatus();
   
@@ -85,36 +85,36 @@ export function updateAccountInfo(state) {
   }
 }
 
-// 更新余额
+// Update Balances
 export function updateBalances(state) {
   const publicEl = dom.publicBalance();
   const privateEl = dom.privateBalance();
   const symbol = erc20TokenInfo.symbol;
   
-  // 公开余额
+  // Public balance
   if (publicEl) {
     publicEl.textContent = formatBalance(state.publicBalance);
   }
   
-  // 隐私余额
+  // Private balance
   if (privateEl) {
     privateEl.textContent = formatBalance(state.privateBalance);
   }
   
-  // 根据隐私启用状态显示/隐藏相关元素
+  // Update privacy visibility based on state
   updatePrivacyVisibility(state);
   
-  // 更新转换按钮状态
+  // Update convert buttons state
   updateConvertButtons(state);
   
-  // 更新滑动开关的余额显示
+  // Update toggle balance display
   updateToggleBalance(state);
   
-  // 更新转账按钮状态
+  // Update transfer button state
   updateTransferButtonState(state);
 }
 
-// 根据隐私启用状态显示/隐藏相关元素
+// Update privacy visibility based on enabled state
 function updatePrivacyVisibility(state) {
   const privateBalanceRow = document.getElementById('private-balance-row');
   const convertBtn = document.getElementById('open-convert-modal');
@@ -124,17 +124,17 @@ function updatePrivacyVisibility(state) {
   
   const isPrivacyEnabled = state.isPrivacyEnabled;
   
-  // 隐私余额行
+  // Private balance row
   if (privateBalanceRow) {
     privateBalanceRow.style.display = isPrivacyEnabled ? 'flex' : 'none';
   }
   
-  // 隐私存取按钮
+  // Privacy convert button
   if (convertBtn) {
     convertBtn.style.display = isPrivacyEnabled ? 'block' : 'none';
   }
   
-  // 转账区域：静态显示 vs 滑动开关
+  // Transfer area: static display vs toggle switch
   if (balanceStaticDisplay) {
     balanceStaticDisplay.style.display = isPrivacyEnabled ? 'none' : 'flex';
   }
@@ -142,26 +142,26 @@ function updatePrivacyVisibility(state) {
     balanceToggleWrapper.style.display = isPrivacyEnabled ? 'block' : 'none';
   }
   
-  // 更新静态显示的余额（带类型说明）
+  // Update static balance display (with type label)
   if (staticPublicBalance) {
     staticPublicBalance.textContent = `可用余额: ${formatBalance(state.publicBalance)} ${erc20TokenInfo.symbol}（公开）`;
   }
   
-  // 更新滑动开关的余额显示
+  // Update toggle balance display
   updateToggleBalance(state);
 }
 
-// 更新转换按钮状态（单按钮设计）
+// Update convert buttons state (single button design)
 function updateConvertButtons(state) {
-  // 单按钮状态在 updateConvertActionButton 中处理
-  // 这里只更新余额转换触发按钮
+  // Single button state is handled in updateConvertActionButton
+  // Here we only update the modal trigger button
   const openModalBtn = document.getElementById('open-convert-modal');
   if (openModalBtn) {
     openModalBtn.disabled = !state.account || !state.isPrivacyEnabled;
   }
 }
 
-// 更新 Modal 中的余额显示（支持方向切换）
+// Update Modal balance display (supports direction switch)
 export function updateModalBalances(state, direction = 'deposit') {
   const fromIcon = document.getElementById('modal-from-icon');
   const fromLabel = document.getElementById('modal-from-label');
@@ -172,7 +172,7 @@ export function updateModalBalances(state, direction = 'deposit') {
   const modalTokenSymbol = document.getElementById('modal-token-symbol');
   
   if (direction === 'deposit') {
-    // 公开 → 隐私
+    // Public → Private
     if (fromIcon) fromIcon.textContent = '💳';
     if (fromLabel) fromLabel.textContent = '公开余额';
     if (fromValue) fromValue.textContent = formatBalance(state.publicBalance);
@@ -180,7 +180,7 @@ export function updateModalBalances(state, direction = 'deposit') {
     if (toLabel) toLabel.textContent = '隐私余额';
     if (toValue) toValue.textContent = formatBalance(state.privateBalance);
   } else {
-    // 隐私 → 公开
+    // Private → Public
     if (fromIcon) fromIcon.textContent = '🔐';
     if (fromLabel) fromLabel.textContent = '隐私余额';
     if (fromValue) fromValue.textContent = formatBalance(state.privateBalance);
@@ -194,7 +194,7 @@ export function updateModalBalances(state, direction = 'deposit') {
   }
 }
 
-// 更新转换操作按钮
+// Update convert action button
 export function updateConvertActionButton(direction, state) {
   const btn = document.getElementById('convert-action-btn');
   if (!btn) {
@@ -203,25 +203,25 @@ export function updateConvertActionButton(direction, state) {
   }
   
   if (direction === 'deposit') {
-    // 存入隐私（公开 → 隐私）
+    // Deposit to private (Public → Private)
     btn.className = 'modal-single-action-btn deposit';
     btn.innerHTML = '<span class="btn-text">存入隐私</span><span class="btn-arrow">→</span>';
     btn.disabled = !state.account || !state.isPrivacyEnabled || parseFloat(state.publicBalance) <= 0;
   } else {
-    // 提取公开（隐私 → 公开）
+    // Withdraw to public (Private → Public)
     btn.className = 'modal-single-action-btn withdraw';
     btn.innerHTML = '<span class="btn-text">提取公开</span><span class="btn-arrow">←</span>';
     btn.disabled = !state.account || !state.isPrivacyEnabled || parseFloat(state.privateBalance) <= 0;
   }
 }
 
-// 更新代币显示
+// Update Token Display
 export function updateTokenDisplay() {
   const tokenInfoEl = dom.tokenInfo();
   const tokenBadgeEl = dom.tokenSymbolBadge();
   const symbol = erc20TokenInfo.symbol;
   
-  // 更新代币信息
+  // Update token info
   if (tokenInfoEl && erc20TokenInfo.address) {
     tokenInfoEl.innerHTML = `
       <strong style="color: var(--text-primary);">${symbol}</strong>
@@ -230,24 +230,24 @@ export function updateTokenDisplay() {
     `;
   }
   
-  // 更新顶部的代币徽章
+  // Update token badge
   if (tokenBadgeEl) {
     tokenBadgeEl.textContent = symbol;
   }
   
-  // 更新转账输入框后缀
+  // Update transfer input suffix
   const transferSuffix = dom.transferSuffix();
   if (transferSuffix) transferSuffix.textContent = symbol;
 }
 
-// 更新滑动开关余额显示
+// Update toggle balance display
 function updateToggleBalance(state) {
   const toggleBalanceEl = document.getElementById('toggle-current-balance');
   const symbol = erc20TokenInfo.symbol;
   
   if (!toggleBalanceEl) return;
   
-  // 根据当前选中的类型显示对应余额（带类型说明）
+  // Show balance based on selected type (with type label)
   if (currentTransferType === 'public') {
     toggleBalanceEl.textContent = `可用余额: ${formatBalance(state.publicBalance)} ${symbol}（公开）`;
     toggleBalanceEl.classList.remove('private');
@@ -257,7 +257,7 @@ function updateToggleBalance(state) {
   }
 }
 
-// 更新历史记录
+// Update History
 export function updateHistory(transactions) {
   const listEl = dom.historyList();
   if (!listEl) return;
@@ -288,7 +288,7 @@ export function updateHistory(transactions) {
     `;
   }).join('');
   
-  // 添加点击事件
+  // Add click event
   listEl.querySelectorAll('.history-item').forEach(item => {
     item.addEventListener('click', () => {
       const index = parseInt(item.dataset.txIndex);
@@ -297,7 +297,7 @@ export function updateHistory(transactions) {
   });
 }
 
-// 显示交易详情
+// Show Transaction Details
 export function showTransactionDetails(tx) {
   const card = dom.transactionDetailsCard();
   const content = dom.transactionDetailsContent();
@@ -342,7 +342,7 @@ export function showTransactionDetails(tx) {
   
   card.style.display = 'block';
   
-  // 返回按钮
+  // Back button
   const backBtn = document.getElementById('back-to-list');
   if (backBtn) {
     backBtn.addEventListener('click', () => {
@@ -351,18 +351,18 @@ export function showTransactionDetails(tx) {
   }
 }
 
-// 更新转账收款方状态
+// Update Transfer Recipient Status
 export function updateTransferRecipientStatus(status, message) {
   const statusEl = dom.transferRecipientStatus();
   const hintEl = dom.transferHint();
   if (!statusEl) return;
   
-  // 设置状态样式
+  // Set status style
   statusEl.className = 'recipient-status';
   statusEl.classList.add(status);
   statusEl.textContent = message;
   
-  // 显示状态，隐藏默认提示
+  // Show status, hide default hint
   if (status && message) {
     statusEl.style.display = 'inline';
     if (hintEl) hintEl.style.display = 'none';
@@ -372,7 +372,7 @@ export function updateTransferRecipientStatus(status, message) {
   }
 }
 
-// 设置按钮加载状态
+// Set Button Loading State
 export function setButtonLoading(selector, isLoading, loadingText = '处理中...') {
   const btn = document.querySelector(selector);
   if (!btn) return;
@@ -390,7 +390,7 @@ export function setButtonLoading(selector, isLoading, loadingText = '处理中..
   }
 }
 
-// 选择转账类型
+// Select Transfer Type
 export function selectTransferType(type, state) {
   currentTransferType = type;
   
@@ -399,15 +399,15 @@ export function selectTransferType(type, state) {
   const statusEl = dom.transferRecipientStatus();
   const toggleInput = document.getElementById('balance-toggle-input');
   
-  // 更新滑动开关状态
+  // Update toggle switch state
   if (toggleInput) {
     toggleInput.checked = (type === 'private');
   }
   
-  // 更新余额显示
+  // Update balance display
   updateToggleBalance(state);
   
-  // 更新转账按钮
+  // Update transfer button
   if (transferBtn) {
     if (type === 'public') {
       transferBtn.textContent = '💳 发送公开转账';
@@ -418,7 +418,7 @@ export function selectTransferType(type, state) {
     }
   }
   
-  // 切换到公开时，重置状态显示
+  // Reset status display when switching to public
   if (type === 'public') {
     if (statusEl) {
       statusEl.style.display = 'none';
@@ -430,27 +430,27 @@ export function selectTransferType(type, state) {
     }
   }
   
-  // 更新提示（隐私转账时显示要求）
+  // Update hint (show requirement for private transfer)
   if (hintEl && type === 'private') {
     hintEl.textContent = '对方需已启用隐私交易';
   }
   
-  // 更新按钮状态
+  // Update button state
   updateTransferButtonState(state);
 }
 
-// 更新转账按钮状态
+// Update Transfer Button State
 function updateTransferButtonState(state) {
   const transferBtn = dom.transferBtn();
   if (!transferBtn) return;
   
-  // 必须连接钱包
+  // Wallet must be connected
   if (!state.account) {
     transferBtn.disabled = true;
     return;
   }
   
-  // 隐私转账需要启用隐私
+  // Private transfer requires privacy enabled
   if (currentTransferType === 'private' && !state.isPrivacyEnabled) {
     transferBtn.disabled = true;
     return;
@@ -459,12 +459,12 @@ function updateTransferButtonState(state) {
   transferBtn.disabled = false;
 }
 
-// 获取当前转账类型
+// Get Current Transfer Type
 export function getTransferType() {
   return currentTransferType;
 }
 
-// 获取当前余额（根据选中的类型）
+// Get Current Balance (based on selected type)
 export function getCurrentBalance(state) {
   if (currentTransferType === 'public') {
     return state.publicBalance;
@@ -472,7 +472,7 @@ export function getCurrentBalance(state) {
   return state.privateBalance;
 }
 
-// 更新全部 UI
+// Update All UI
 export function updateAll(state) {
   updateConnectButton(state);
   updateAccountInfo(state);

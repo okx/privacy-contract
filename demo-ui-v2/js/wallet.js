@@ -1,9 +1,9 @@
-// 钱包管理模块
+// Wallet Management Module
 import { CONFIG, contracts, erc20TokenInfo, loadContractConfig } from './config.js';
 import { ensureEthers, getMetaMaskProvider, storage, showToast } from './utils.js';
 import * as UI from './ui.js';
 
-// 钱包状态
+// Wallet State
 class WalletState {
   constructor() {
     this.provider = null;
@@ -41,7 +41,7 @@ class WalletState {
 
 export const walletState = new WalletState();
 
-// 初始化 RailgunWallet
+// Initialize RailgunWallet
 async function initializeRailgunWallet() {
   const { RailgunWalletBrowser } = window.RailgunWallet;
   walletState.railgunWallet = new RailgunWalletBrowser();
@@ -75,23 +75,23 @@ async function initializeRailgunWallet() {
   walletState.railgunWallet.setCurrentAccount(walletState.account);
 }
 
-// 验证网络
+// Validate Network
 async function validateNetwork(provider) {
   const currentChainIdHex = await provider.request({ method: 'eth_chainId' });
   const currentChainId = parseInt(currentChainIdHex, 16);
   
-  console.log('📡 网络状态:');
-  console.log('   当前链 ID:', currentChainId);
-  console.log('   期望链 ID:', CONFIG.TARGET_CHAIN.chainId);
+  console.log('📡 Network status:');
+  console.log('   Current chain ID:', currentChainId);
+  console.log('   Expected chain ID:', CONFIG.TARGET_CHAIN.chainId);
   
   if (currentChainId !== CONFIG.TARGET_CHAIN.chainId) {
     throw new Error(`网络不匹配: 当前连接到链 ${currentChainId}，但期望连接到链 ${CONFIG.TARGET_CHAIN.chainId}。请在 MetaMask 中切换网络。`);
   }
   
-  console.log('✅ 网络匹配!');
+  console.log('✅ Network matched!');
 }
 
-// 加载 ERC20 代币信息
+// Load ERC20 Token Info
 export async function loadERC20TokenInfo() {
   if (contracts.testERC20 && contracts.testERC20 !== '0x0000000000000000000000000000000000000000') {
     erc20TokenInfo.address = contracts.testERC20;
@@ -116,7 +116,7 @@ export async function loadERC20TokenInfo() {
   }
 }
 
-// 连接钱包
+// Connect Wallet
 export async function connectWallet() {
   if (walletState.isConnecting) return;
   walletState.isConnecting = true;
@@ -148,7 +148,7 @@ export async function connectWallet() {
 
     await loadERC20TokenInfo();
     
-    // 等待 RailgunWallet 加载
+    // Wait for RailgunWallet to load
     await new Promise((resolve) => {
       if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
         resolve();
@@ -171,7 +171,7 @@ export async function connectWallet() {
     showToast('success', '钱包已连接', `地址: ${walletState.account.slice(0, 6)}...${walletState.account.slice(-4)}`);
     
   } catch (error) {
-    console.error('连接错误:', error);
+    console.error('Connection error:', error);
     
     if (error.code === 4001) {
       showToast('warning', '连接已取消', '用户拒绝了连接请求');
@@ -185,7 +185,7 @@ export async function connectWallet() {
   }
 }
 
-// 刷新余额
+// Refresh Balances
 export async function refreshBalances() {
   if (!walletState.provider || !walletState.account) return;
   if (!contracts.testERC20 || contracts.testERC20 === '0x0000000000000000000000000000000000000000') return;
@@ -203,7 +203,7 @@ export async function refreshBalances() {
     
     walletState.publicBalance = parseFloat(formattedBalance).toFixed(2);
     
-    // 获取隐私余额
+    // Get private balance
     if (walletState.railgunWallet && walletState.isPrivacyEnabled) {
       const privateBalance = await walletState.railgunWallet.getBalance(
         currentAccount,
@@ -220,11 +220,11 @@ export async function refreshBalances() {
     
     UI.updateBalances(walletState);
   } catch (error) {
-    console.warn('刷新余额失败:', error.message);
+    console.warn('Refresh balance failed:', error.message);
   }
 }
 
-// 生成 MPK
+// Generate MPK
 async function generateMPK() {
   const ethersLib = ensureEthers();
   
@@ -254,7 +254,7 @@ async function generateMPK() {
   await checkRegistrationStatus();
 }
 
-// 检查注册状态
+// Check Registration Status
 async function checkRegistrationStatus() {
   if (!walletState.provider || !walletState.account || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
     walletState.isRegistered = false;
@@ -270,35 +270,35 @@ async function checkRegistrationStatus() {
     walletState.isRegistered = userInfo.mpk !== '0x0000000000000000000000000000000000000000000000000000000000000000';
     walletState.isPrivacyEnabled = walletState.isRegistered;
     
-    // 如果已注册，检查并自动授权
+    // If registered, check and auto-approve
     if (walletState.isRegistered && contracts.testERC20 !== '0x0000000000000000000000000000000000000000') {
       const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, walletState.provider);
       const allowance = await testERC20.allowance(walletState.account, contracts.railgun);
       
       if (allowance.eq(0)) {
-        console.log('⚠️ 代币未授权，自动触发授权...');
+        console.log('⚠️ Token not approved, triggering auto-approve...');
         try {
           const testERC20Signer = testERC20.connect(walletState.signer);
           const approveTx = await testERC20Signer.approve(contracts.railgun, ethersLib.constants.MaxUint256);
           await approveTx.wait();
-          console.log('✅ 代币已授权');
+          console.log('✅ Token approved');
         } catch (approveError) {
           if (approveError.code === 4001) {
-            console.warn('⚠️ 用户取消了授权');
+            console.warn('⚠️ User cancelled approval');
           } else {
-            console.warn('⚠️ 授权失败:', approveError.message);
+            console.warn('⚠️ Approval failed:', approveError.message);
           }
         }
       }
     }
   } catch (error) {
-    console.warn('检查注册状态失败:', error);
+    console.warn('Check registration status failed:', error);
     walletState.isRegistered = false;
     walletState.isPrivacyEnabled = false;
   }
 }
 
-// 启用隐私交易（注册 MPK）
+// Enable Privacy (Register MPK)
 export async function enablePrivacy() {
   if (!walletState.signer || !walletState.account) {
     showToast('warning', '请先连接钱包', '需要连接钱包才能启用隐私交易');
@@ -338,15 +338,15 @@ export async function enablePrivacy() {
     walletState.isRegistered = true;
     walletState.isPrivacyEnabled = true;
     
-    // 自动授权代币
-    console.log('🔄 正在授权代币...');
+    // Auto approve token
+    console.log('🔄 Approving token...');
     try {
       const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, walletState.signer);
       const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
       await approveTx.wait();
-      console.log('✅ 代币已授权');
+      console.log('✅ Token approved');
     } catch (approveError) {
-      console.warn('⚠️ 代币授权失败:', approveError.message);
+      console.warn('⚠️ Token approval failed:', approveError.message);
     }
     
     await refreshBalances();
@@ -356,7 +356,7 @@ export async function enablePrivacy() {
     return true;
     
   } catch (error) {
-    console.error('启用隐私交易失败:', error);
+    console.error('Enable privacy failed:', error);
     
     if (error.code === 4001) {
       showToast('warning', '交易已取消', '用户取消了交易');
@@ -367,7 +367,7 @@ export async function enablePrivacy() {
   }
 }
 
-// 查询 MPK
+// Lookup MPK
 export async function lookupMPK(address) {
   const ethersLib = ensureEthers();
   if (!address || !ethersLib.utils.isAddress(address)) {
@@ -396,12 +396,12 @@ export async function lookupMPK(address) {
       viewingPublicKey: viewingPublicKeyStr
     };
   } catch (error) {
-    console.error('查询 MPK 失败:', error);
+    console.error('Lookup MPK failed:', error);
     return null;
   }
 }
 
-// 交易管理
+// Transaction Management
 function loadTransactions() {
   const saved = storage.get('railgun-transactions-v2', []);
   if (walletState.account) {
@@ -473,7 +473,7 @@ export function updateTransactionStatus(txHash, status, title = null, descriptio
   }
 }
 
-// 设置 provider 监听器
+// Setup Provider Listeners
 export function setupProviderListeners() {
   const provider = getMetaMaskProvider();
   if (!provider) return;
@@ -496,5 +496,5 @@ export function setupProviderListeners() {
   });
 }
 
-// 导出
+// Export
 export { loadContractConfig };

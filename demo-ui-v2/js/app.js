@@ -1,31 +1,31 @@
-// 应用入口
+// App Entry Point
 import { loadContractConfig, connectWallet, enablePrivacy, lookupMPK, walletState, setupProviderListeners, refreshBalances } from './wallet.js';
 import { handleDeposit, handleWithdraw, handlePublicTransfer, handlePrivateTransfer } from './transactions.js';
 import * as UI from './ui.js';
 import { ensureEthers, showToast } from './utils.js';
 
-// 初始化应用
+// Initialize App
 async function init() {
-  console.log('🔒 隐私钱包 v2 初始化中...');
+  console.log('🔒 Privacy Wallet v2 initializing...');
   
-  // 加载配置
+  // Load config
   await loadContractConfig();
   
-  // 设置 provider 监听器
+  // Setup provider listeners
   setupProviderListeners();
   
-  // 绑定事件
+  // Bind events
   bindEvents();
   
-  // 初始化 UI
+  // Initialize UI
   UI.updateAll(walletState);
   
-  console.log('✅ 应用初始化完成');
+  console.log('✅ App initialization complete');
 }
 
-// 绑定所有事件
+// Bind All Events
 function bindEvents() {
-  // 连接钱包按钮
+  // Connect wallet button
   const connectBtn = document.getElementById('connect-btn');
   if (connectBtn) {
     connectBtn.addEventListener('click', () => {
@@ -37,7 +37,7 @@ function bindEvents() {
     });
   }
 
-  // 隐私开关
+  // Privacy toggle
   const privacyToggle = document.getElementById('privacy-toggle');
   if (privacyToggle) {
     privacyToggle.addEventListener('change', async (e) => {
@@ -53,7 +53,7 @@ function bindEvents() {
     });
   }
 
-  // ========== 余额转换（方案G - Modal弹窗 + 单按钮设计）==========
+  // ========== Balance Convert (Modal + Single Button Design) ==========
   
   const convertModal = document.getElementById('convert-modal');
   const openModalBtn = document.getElementById('open-convert-modal');
@@ -62,21 +62,21 @@ function bindEvents() {
   const swapDirectionBtn = document.getElementById('modal-swap-direction');
   const convertActionBtn = document.getElementById('convert-action-btn');
   
-  // 转换方向状态：'deposit' (公开→隐私) 或 'withdraw' (隐私→公开)
+  // Convert direction state: 'deposit' (Public→Private) or 'withdraw' (Private→Public)
   let convertDirection = 'deposit';
   
-  // 打开 Modal
+  // Open Modal
   if (openModalBtn) {
     openModalBtn.addEventListener('click', () => {
       if (convertModal) {
         convertModal.style.display = 'flex';
-        convertDirection = 'deposit'; // 重置为默认方向
+        convertDirection = 'deposit'; // Reset to default direction
         
-        // 清空输入框
+        // Clear input
         if (convertAmountInput) {
           convertAmountInput.value = '';
         }
-        // 清除快捷按钮高亮
+        // Clear quick button highlight
         document.querySelectorAll('.modal-quick-btn').forEach(b => b.classList.remove('active'));
         
         UI.updateModalBalances(walletState, convertDirection);
@@ -85,7 +85,7 @@ function bindEvents() {
     });
   }
   
-  // 关闭 Modal（只有点击 X 按钮才关闭）
+  // Close Modal (only via X button)
   if (closeModalBtn) {
     closeModalBtn.addEventListener('click', () => {
       if (convertModal) {
@@ -94,22 +94,22 @@ function bindEvents() {
     });
   }
   
-  // 点击箭头切换方向
+  // Click arrow to swap direction
   if (swapDirectionBtn) {
     swapDirectionBtn.addEventListener('click', () => {
-      // 切换方向
+      // Toggle direction
       convertDirection = convertDirection === 'deposit' ? 'withdraw' : 'deposit';
       
-      // 更新 UI（双向箭头不需要旋转动画）
+      // Update UI (bidirectional arrow doesn't need rotation)
       UI.updateModalBalances(walletState, convertDirection);
       UI.updateConvertActionButton(convertDirection, walletState);
       
-      // 清除快捷按钮高亮
+      // Clear quick button highlight
       document.querySelectorAll('.modal-quick-btn').forEach(b => b.classList.remove('active'));
     });
   }
   
-  // 单按钮执行转换
+  // Single button to execute convert
   if (convertActionBtn) {
     convertActionBtn.addEventListener('click', () => {
       const amount = convertAmountInput?.value || '';
@@ -121,11 +121,11 @@ function bindEvents() {
     });
   }
   
-  // 快捷按钮（25%, 50%, 75%, 最大）- 使用来源余额
+  // Quick buttons (25%, 50%, 75%, Max) - use source balance
   document.querySelectorAll('.modal-quick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const percent = parseInt(btn.dataset.percent);
-      // 根据当前方向使用对应的"来源"余额
+      // Use source balance based on current direction
       const balance = convertDirection === 'deposit' 
         ? parseFloat(walletState.publicBalance) || 0
         : parseFloat(walletState.privateBalance) || 0;
@@ -134,31 +134,31 @@ function bindEvents() {
         convertAmountInput.value = amount;
       }
       
-      // 高亮当前选中的按钮
+      // Highlight selected button
       document.querySelectorAll('.modal-quick-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     });
   });
 
-  // ========== 转账 - 滑动开关 ==========
+  // ========== Transfer - Toggle Switch ==========
   
   const transferAmountInput = document.getElementById('transfer-amount');
   const balanceToggleInput = document.getElementById('balance-toggle-input');
   
-  // 滑动开关切换
+  // Toggle switch change
   if (balanceToggleInput) {
     balanceToggleInput.addEventListener('change', async (e) => {
       const type = e.target.checked ? 'private' : 'public';
       UI.selectTransferType(type, walletState);
       
-      // 切换余额类型时清空输入框
+      // Clear input when switching balance type
       if (transferAmountInput) {
         transferAmountInput.value = '';
       }
-      // 清除快捷按钮高亮
+      // Clear quick button highlight
       document.querySelectorAll('.transfer-quick-btn').forEach(b => b.classList.remove('active'));
       
-      // 切换到隐私转账时，如果地址已存在，自动检查 MPK
+      // Auto-check MPK when switching to private transfer if address exists
       if (type === 'private') {
         const transferAddress = document.getElementById('transfer-address');
         const address = transferAddress?.value?.trim();
@@ -179,9 +179,9 @@ function bindEvents() {
     });
   }
 
-  // ========== 转账 ==========
+  // ========== Transfer ==========
   
-  // 转账地址输入（隐私转账时查询 MPK）
+  // Transfer address input (lookup MPK for private transfer)
   const transferAddress = document.getElementById('transfer-address');
   let lookupTimeout = null;
   
@@ -193,7 +193,7 @@ function bindEvents() {
         clearTimeout(lookupTimeout);
       }
       
-      // 如果是隐私转账，延迟查询 MPK
+      // Delayed MPK lookup for private transfer
       if (UI.getTransferType() === 'private') {
         const ethersLib = ensureEthers();
         
@@ -223,7 +223,7 @@ function bindEvents() {
     });
   }
 
-  // 转账快捷百分比按钮
+  // Transfer quick percentage buttons
   document.querySelectorAll('.transfer-quick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const percent = parseInt(btn.dataset.percent);
@@ -235,13 +235,13 @@ function bindEvents() {
         transferAmountInput.value = amount;
       }
       
-      // 更新高亮状态
+      // Update highlight state
       document.querySelectorAll('.transfer-quick-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     });
   });
 
-  // 转账提交按钮
+  // Transfer submit button
   const transferBtn = document.getElementById('transfer-btn');
   if (transferBtn) {
     transferBtn.addEventListener('click', () => {
@@ -259,7 +259,7 @@ function bindEvents() {
     });
   }
 
-  // 定期刷新余额
+  // Periodically refresh balances
   setInterval(() => {
     if (walletState.account) {
       refreshBalances();
@@ -267,5 +267,5 @@ function bindEvents() {
   }, 30000);
 }
 
-// DOM 加载完成后初始化
+// Initialize after DOM loaded
 document.addEventListener('DOMContentLoaded', init);

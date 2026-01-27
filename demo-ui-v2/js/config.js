@@ -1,6 +1,6 @@
-// 配置管理
+// Configuration Management
 export const CONFIG = {
-  // 目标链配置（从服务器动态加载）
+  // Target chain config (dynamically loaded from server)
   TARGET_CHAIN: {
     chainId: null,
     chainName: null,
@@ -40,22 +40,22 @@ export const CONFIG = {
   ]
 };
 
-// 合约地址（从 deployments.json 加载）
+// Contract Addresses (loaded from deployments.json)
 export const contracts = {
   mpkRegistry: '0x0000000000000000000000000000000000000000',
   railgun: '0x0000000000000000000000000000000000000000',
   testERC20: '0x0000000000000000000000000000000000000000'
 };
 
-// ERC20 代币信息
+// ERC20 Token Info
 export const erc20TokenInfo = {
   address: null,
   symbol: 'TOKEN',
-  name: '测试代币',
+  name: 'Test Token',
   decimals: 18
 };
 
-// 加载网络配置
+// Load Network Config
 async function loadNetworkConfig() {
   try {
     const response = await fetch('/api/network-config');
@@ -67,22 +67,22 @@ async function loadNetworkConfig() {
       CONFIG.TARGET_CHAIN.rpcUrl = networkConfig.rpcUrl;
       CONFIG.TARGET_CHAIN.blockExplorerUrl = networkConfig.blockExplorerUrl || '';
       
-      console.log('✅ 网络配置已加载:');
-      console.log('  链 ID:', networkConfig.chainId);
-      console.log('  链名称:', networkConfig.chainName);
+      console.log('✅ Network config loaded:');
+      console.log('  Chain ID:', networkConfig.chainId);
+      console.log('  Chain Name:', networkConfig.chainName);
       console.log('  RPC URL:', networkConfig.rpcUrl);
-      console.log('  模式:', networkConfig.isLocal ? '本地' : '在线');
+      console.log('  Mode:', networkConfig.isLocal ? 'Local' : 'Online');
       
       return true;
     }
     return false;
   } catch (error) {
-    console.warn('⚠️ 加载网络配置失败:', error.message);
+    console.warn('⚠️ Load network config failed:', error.message);
     return false;
   }
 }
 
-// 检查服务器会话
+// Check Server Session
 async function checkServerSession(storage) {
   try {
     const response = await fetch('/api/session');
@@ -91,18 +91,18 @@ async function checkServerSession(storage) {
       const savedSessionId = storage.get('railgun-server-session');
       
       if (!savedSessionId || savedSessionId !== sessionId) {
-        console.log('🧹 清除本地数据（检测到新会话）...');
+        console.log('🧹 Clearing local data (new session detected)...');
         storage.clearAll();
       }
       
       storage.set('railgun-server-session', sessionId);
     }
   } catch (error) {
-    console.warn('检查服务器会话失败:', error.message);
+    console.warn('Check server session failed:', error.message);
   }
 }
 
-// 加载合约配置
+// Load Contract Config
 export async function loadContractConfig() {
   try {
     await loadNetworkConfig();
@@ -122,7 +122,7 @@ export async function loadContractConfig() {
         erc20TokenInfo.address = contracts.testERC20;
       }
       
-      console.log('✅ 合约配置已加载:');
+      console.log('✅ Contract config loaded:');
       console.log('  RailgunSmartWallet:', contracts.railgun);
       console.log('  TestERC20:', contracts.testERC20);
       console.log('  MPKRegistry:', contracts.mpkRegistry);
@@ -131,7 +131,7 @@ export async function loadContractConfig() {
     }
     return false;
   } catch (error) {
-    console.warn('⚠️ 加载 deployments.json 失败:', error.message);
+    console.warn('⚠️ Load deployments.json failed:', error.message);
     return false;
   }
 }

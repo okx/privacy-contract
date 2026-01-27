@@ -1,4 +1,4 @@
-// 交易功能模块
+// Transaction Module
 import { CONFIG, contracts, erc20TokenInfo } from './config.js';
 import { ensureEthers, validateAmount, showToast, formatAddress } from './utils.js';
 import { walletState, addTransaction, updateTransactionStatus, refreshBalances, lookupMPK } from './wallet.js';
@@ -6,7 +6,7 @@ import * as UI from './ui.js';
 
 const SIGNATURE_MESSAGE = 'Railgun Spendingkey';
 
-// 请求签名确认
+// Request signature confirmation
 async function requestSignatureConfirmation() {
   const ethersLib = ensureEthers();
   
@@ -23,7 +23,7 @@ async function requestSignatureConfirmation() {
   return keys;
 }
 
-// 广播交易
+// Broadcast transaction
 async function broadcast(type, transaction) {
   const response = await fetch('/api/broadcast', {
     method: 'POST',
@@ -37,7 +37,7 @@ async function broadcast(type, transaction) {
   return result;
 }
 
-// 请求更新 Merkle root
+// Request Merkle root update
 function requestUpdateRoot() {
   fetch('/api/update-root', {
     method: 'POST',
@@ -46,13 +46,13 @@ function requestUpdateRoot() {
     .then(response => response.json())
     .then(result => {
       if (result.success) {
-        console.log('✅ Merkle root 更新已请求');
+        console.log('✅ Merkle root update requested');
       }
     })
     .catch(() => {});
 }
 
-// 格式化交易数据
+// Format transaction data for contract
 function formatTransactionForContract(transaction) {
   const ethersLib = ensureEthers();
   
@@ -107,9 +107,9 @@ function formatTransactionForContract(transaction) {
   };
 }
 
-// 存入隐私余额（Shield）
+// Deposit to Private Balance (Shield)
 export async function handleDeposit(amountValue) {
-  console.log('存入隐私余额, 金额:', amountValue);
+  console.log('Deposit to private balance, amount:', amountValue);
   
   if (!walletState.signer || !walletState.account) {
     showToast('error', '钱包未连接', '请先连接钱包');
@@ -135,7 +135,7 @@ export async function handleDeposit(amountValue) {
   try {
     const amountWei = ethersLib.utils.parseEther(amountValue);
     
-    // 检查余额
+    // Check balance
     const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, walletState.signer);
     const balance = await testERC20.balanceOf(walletState.account);
 
@@ -144,7 +144,7 @@ export async function handleDeposit(amountValue) {
       return;
     }
 
-    // 创建 Shield 请求
+    // Create Shield request
     const shieldRequestRaw = await walletState.railgunWallet.createShieldRequest(
       walletState.account,
       amountWei.toString(),
@@ -199,11 +199,11 @@ export async function handleDeposit(amountValue) {
     updateTransactionStatus(depositTx.hash, 'success', '存入隐私', `已存入 ${amountValue} ${erc20TokenInfo.symbol}`);
     showToast('success', '存入成功', `${amountValue} ${erc20TokenInfo.symbol} 已存入隐私余额`);
     
-    // 交易成功后自动关闭 Modal
+    // Auto close modal after success
     const convertModal = document.getElementById('convert-modal');
     if (convertModal) convertModal.style.display = 'none';
     
-    // 后台扫描更新余额
+    // Background scan to update balance
     (async () => {
       try {
         await walletState.railgunWallet.registerAccount(walletState.account);
@@ -239,9 +239,9 @@ export async function handleDeposit(amountValue) {
   }
 }
 
-// 提取公开余额（Unshield）
+// Withdraw to Public Balance (Unshield)
 export async function handleWithdraw(amountValue) {
-  console.log('提取公开余额, 金额:', amountValue);
+  console.log('Withdraw to public balance, amount:', amountValue);
   
   if (!walletState.signer || !walletState.account) {
     showToast('error', '钱包未连接', '请先连接钱包');
@@ -262,7 +262,7 @@ export async function handleWithdraw(amountValue) {
 
   const ethersLib = ensureEthers();
   
-  // 检查隐私余额
+  // Check private balance
   const amountWei = ethersLib.utils.parseEther(amountValue);
   const privateBalance = await walletState.railgunWallet.getBalance(
     walletState.account,
@@ -317,22 +317,22 @@ export async function handleWithdraw(amountValue) {
     addTransaction('withdraw', '提取公开', `提取 ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
     showToast('success', '提取成功', `${amountValue} ${erc20TokenInfo.symbol} 已提取到公开余额`);
 
-    // 交易成功后自动关闭 Modal
+    // Auto close modal after success
     const convertModal = document.getElementById('convert-modal');
     if (convertModal) convertModal.style.display = 'none';
 
-    // 后台扫描更新余额
+    // Background scan to update balance
     (async () => {
       try {
         await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
         await refreshBalances();
       } catch (scanError) {
-        console.warn('后台扫描失败:', scanError.message);
+        console.warn('Background scan failed:', scanError.message);
       }
     })();
 
   } catch (error) {
-    console.error('提取失败:', error);
+    console.error('Withdraw failed:', error);
     
     if (error.code === 4001) {
       showToast('warning', '交易已取消', '用户取消了签名');
@@ -344,9 +344,9 @@ export async function handleWithdraw(amountValue) {
   }
 }
 
-// 公开转账
+// Public Transfer
 export async function handlePublicTransfer(recipientAddress, amountValue) {
-  console.log('公开转账, 收款方:', recipientAddress, '金额:', amountValue);
+  console.log('Public transfer, recipient:', recipientAddress, 'amount:', amountValue);
   
   if (!walletState.signer || !walletState.account) {
     showToast('error', '钱包未连接', '请先连接钱包');
@@ -369,7 +369,7 @@ export async function handlePublicTransfer(recipientAddress, amountValue) {
 
   const amountWei = ethersLib.utils.parseEther(amountValue);
   
-  // 检查余额
+  // Check balance
   const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, walletState.signer);
   const balance = await testERC20.balanceOf(walletState.account);
   
@@ -391,7 +391,7 @@ export async function handlePublicTransfer(recipientAddress, amountValue) {
     updateTransactionStatus(tx.hash, 'success', '公开转账', `转给 ${formatAddress(recipientAddress)}`);
     showToast('success', '转账成功', `${amountValue} ${erc20TokenInfo.symbol} 已转给 ${formatAddress(recipientAddress)}`);
     
-    // 转账成功后清空输入框
+    // Clear input after successful transfer
     const transferAmountInput = document.getElementById('transfer-amount');
     if (transferAmountInput) transferAmountInput.value = '';
     document.querySelectorAll('.transfer-quick-btn').forEach(b => b.classList.remove('active'));
@@ -399,7 +399,7 @@ export async function handlePublicTransfer(recipientAddress, amountValue) {
     await refreshBalances();
 
   } catch (error) {
-    console.error('公开转账失败:', error);
+    console.error('Public transfer failed:', error);
     
     if (error.code === 4001) {
       showToast('warning', '交易已取消', '用户取消了交易');
@@ -411,9 +411,9 @@ export async function handlePublicTransfer(recipientAddress, amountValue) {
   }
 }
 
-// 隐私转账
+// Private Transfer
 export async function handlePrivateTransfer(recipientAddress, amountValue) {
-  console.log('隐私转账, 收款方:', recipientAddress, '金额:', amountValue);
+  console.log('Private transfer, recipient:', recipientAddress, 'amount:', amountValue);
   
   if (!walletState.signer || !walletState.account) {
     showToast('error', '钱包未连接', '请先连接钱包');
@@ -439,7 +439,7 @@ export async function handlePrivateTransfer(recipientAddress, amountValue) {
     return;
   }
 
-  // 查询收款方 MPK
+  // Lookup recipient MPK
   const userInfo = await lookupMPK(recipientAddress);
   
   if (!userInfo) {
@@ -504,12 +504,12 @@ export async function handlePrivateTransfer(recipientAddress, amountValue) {
     addTransaction('transfer-private', '隐私转账', `转给 ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'success');
     showToast('success', '转账成功', `${amountValue} ${erc20TokenInfo.symbol} 已私密转给 ${formatAddress(recipientAddress)}`);
 
-    // 转账成功后清空输入框
+    // Clear input after successful transfer
     const transferAmountInput = document.getElementById('transfer-amount');
     if (transferAmountInput) transferAmountInput.value = '';
     document.querySelectorAll('.transfer-quick-btn').forEach(b => b.classList.remove('active'));
 
-    // 后台扫描更新余额
+    // Background scan to update balance
     (async () => {
       try {
         await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
@@ -520,12 +520,12 @@ export async function handlePrivateTransfer(recipientAddress, amountValue) {
         }]);
         await refreshBalances();
       } catch (scanError) {
-        console.warn('后台扫描失败:', scanError.message);
+        console.warn('Background scan failed:', scanError.message);
       }
     })();
 
   } catch (error) {
-    console.error('隐私转账失败:', error);
+    console.error('Private transfer failed:', error);
     
     if (error.code === 4001) {
       showToast('warning', '交易已取消', '用户取消了签名');
