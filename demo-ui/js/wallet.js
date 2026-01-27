@@ -204,7 +204,25 @@ export async function connectWallet() {
   }
 }
 
-// Refresh balances (with race condition fix)
+// Retry helper with exponential backoff
+async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 500) {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (i < maxRetries - 1) {
+        const delay = initialDelay * Math.pow(2, i);
+        console.log(`Retry ${i + 1}/${maxRetries} after ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// Refresh balances (with race condition fix and retry)
 export async function refreshBalances() {
   if (!state.provider || !state.account) {
     return;
@@ -218,8 +236,9 @@ export async function refreshBalances() {
   const currentAccount = state.account;  // Save current account to detect changes
   
   try {
+    // Retry public balance query
     const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
-    const balance = await erc20.balanceOf(currentAccount);
+    const balance = await retryWithBackoff(() => erc20.balanceOf(currentAccount));
     const decimals = erc20TokenInfo.decimals || 18;
     const formattedBalance = ethersLib.utils.formatUnits(balance, decimals);
     
@@ -231,12 +250,14 @@ export async function refreshBalances() {
     
     state.publicBalance = parseFloat(formattedBalance).toFixed(2);
     
-    // Get private balance
+    // Get private balance with retry
     if (state.railgunWallet) {
-      const privateBalance = await state.railgunWallet.getBalance(
-        currentAccount,
-        contracts.testERC20,
-        0 // TokenType.ERC20
+      const privateBalance = await retryWithBackoff(() => 
+        state.railgunWallet.getBalance(
+          currentAccount,
+          contracts.testERC20,
+          0 // TokenType.ERC20
+        )
       );
       
       // Check again before updating
@@ -251,7 +272,7 @@ export async function refreshBalances() {
     
     updateUI();
   } catch (error) {
-    console.warn('Failed to refresh balances:', error.message);
+    console.warn('Failed to refresh balances after retries:', error.message);
   }
 }
 

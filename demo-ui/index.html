@@ -17,7 +17,7 @@
   <!-- Header -->
   <header class="header">
     <div class="logo">
-      <div class="logo-icon">🛡️</div>
+      <img src="okx-logo.png" alt="OKX" class="logo-img">
       <span>Privacy Wallet</span>
     </div>
     <button class="connect-btn" id="connect-btn">
@@ -35,16 +35,15 @@
           <div class="toggle-header-sidebar">
             <div class="toggle-info-sidebar">
               <span class="toggle-label-sidebar">🔐 Privacy Mode</span>
-              <span class="toggle-hint-sidebar">Enable zero-knowledge privacy</span>
+              <div class="privacy-status-inline" id="privacy-status">
+                <div class="status-dot unregistered"></div>
+                <span class="status-text">Not activated</span>
+              </div>
             </div>
             <label class="privacy-toggle-sidebar">
-              <input type="checkbox" id="privacy-mode-toggle">
+              <input type="checkbox" id="privacy-mode-toggle" disabled>
               <span class="toggle-slider-sidebar"></span>
             </label>
-          </div>
-          <div class="privacy-status" id="privacy-status">
-            <div class="status-dot unregistered"></div>
-            <span class="status-text">Not registered</span>
           </div>
         </div>
       </div>
@@ -53,13 +52,6 @@
       <div class="balance-card">
         <div class="balance-header">
           <span class="balance-title">💰 Balances</span>
-        </div>
-        
-        <!-- ERC20 Token Info -->
-        <div id="erc20-token-info" style="padding: 12px; background: var(--bg-dark); border-radius: 8px; margin-bottom: 16px; font-size: 11px; color: var(--text-muted);">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span>Token: Loading...</span>
-          </div>
         </div>
         
         <div class="balance-row">
@@ -81,68 +73,58 @@
           </div>
           <span class="balance-value private">0.00 TOKEN</span>
         </div>
-      </div>
-
-      <!-- Shield & Unshield Actions -->
-      <div class="shield-actions-card">
-        <div class="shield-actions-header">
-          <span class="shield-actions-title">🔒 Shield & Unshield</span>
-        </div>
         
-        <!-- Shield Action -->
-        <div class="action-row">
-          <div class="action-info">
-            <div class="action-icon shield">🛡️</div>
-            <div>
-              <h4>Shield</h4>
-              <p>Public → Private</p>
-            </div>
+        <!-- Convert Section -->
+        <div class="convert-section">
+          <div class="convert-input-row">
+            <input type="text" class="convert-input" id="convert-amount" placeholder="0.0" value="10">
+            <button class="convert-quick-btn" id="convert-random-btn">RANDOM</button>
+            <button class="convert-quick-btn" id="convert-max-btn">MAX</button>
+            <button class="convert-switch-btn" id="convert-switch-btn">⇄</button>
           </div>
-          <button class="action-btn shield" id="sidebar-shield-btn">Shield</button>
-        </div>
-        
-        <!-- Unshield Action -->
-        <div class="action-row">
-          <div class="action-info">
-            <div class="action-icon unshield">📤</div>
-            <div>
-              <h4>Unshield</h4>
-              <p>Private → Public</p>
-            </div>
-          </div>
-          <button class="action-btn unshield" id="sidebar-unshield-btn">Unshield</button>
+          <button class="convert-action-btn shield" id="convert-action-btn">Shield</button>
         </div>
       </div>
 
-      <!-- History Card -->
-      <div class="history-card">
-        <div class="history-header">
-          <h3>Recent Activity</h3>
+      <!-- Privacy Overview Card -->
+      <div class="overview-card">
+        <div class="overview-header">
+          <span class="overview-icon">💎</span>
+          <span class="overview-title">Privacy Overview</span>
         </div>
-        <div class="history-list">
-          <div style="text-align: center; padding: 20px; color: var(--text-muted);">
-            <p>No transactions yet</p>
+        
+        <div class="overview-item">
+          <span class="overview-label">Total Balance:</span>
+          <span class="overview-value" id="overview-total">0.00 TOKEN</span>
+        </div>
+        
+        <div class="overview-item">
+          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 8px;">
+            <span class="overview-label">Privacy Ratio:</span>
+            <span class="overview-value" id="overview-ratio">0%</span>
+          </div>
+          <div class="privacy-ratio-bar">
+            <div class="privacy-ratio-fill" id="privacy-ratio-fill" style="width: 0%"></div>
           </div>
         </div>
+        
+        <div class="overview-item">
+          <span class="overview-label">Last Active:</span>
+          <span class="overview-value" id="overview-last-active">—</span>
+        </div>
       </div>
+
     </aside>
 
     <!-- Main Content Area -->
     <div class="content">
-      <!-- Tab Navigation -->
-      <div class="tabs">
-        <button class="tab active transfer">
-          💸 Transfer
-        </button>
-        <button class="tab">
-          📋 Transactions
-        </button>
-      </div>
-
-      <!-- Action Panel -->
-      <div class="action-panel">
+      <!-- Transfer Card -->
+      <div class="transfer-card">
+        <!-- Transaction Details View (hidden by default) -->
+        <div id="transaction-detail-view" style="display: none;"></div>
+        
         <!-- Transfer Panel -->
-        <div class="panel-content active" id="transfer-panel">
+        <div id="transfer-panel">
           <div class="panel-header">
             <div class="panel-icon transfer">💸</div>
             <div class="panel-title">
@@ -182,7 +164,10 @@
             <div class="form-group">
               <div class="form-label">
                 <span>Amount</span>
-                <button class="max-btn" data-mode="erc20">MAX</button>
+                <div class="quick-btns">
+                  <button class="quick-btn" data-mode="erc20" data-action="random">RANDOM</button>
+                  <button class="quick-btn" data-mode="erc20" data-action="max">MAX</button>
+                </div>
               </div>
               <div class="input-wrapper">
                 <input type="text" class="form-input" id="erc20-amount" placeholder="0.0">
@@ -190,8 +175,8 @@
               </div>
             </div>
 
-            <button class="submit-btn erc20" id="erc20-transfer-btn">
-              📤 Send ERC20 Transfer
+            <button class="submit-btn erc20" id="erc20-transfer-btn" disabled>
+              📤 Public Transfer
             </button>
           </div>
 
@@ -230,7 +215,10 @@
             <div class="form-group">
               <div class="form-label">
                 <span>Amount</span>
-                <button class="max-btn" data-mode="private">MAX</button>
+                <div class="quick-btns">
+                  <button class="quick-btn" data-mode="private" data-action="random">RANDOM</button>
+                  <button class="quick-btn" data-mode="private" data-action="max">MAX</button>
+                </div>
               </div>
               <div class="input-wrapper">
                 <input type="text" class="form-input" id="private-amount" placeholder="0.0">
@@ -238,30 +226,37 @@
               </div>
             </div>
 
-            <button class="submit-btn transfer" id="private-transfer-btn">
-              🔄 Send Private Transfer
+            <button class="submit-btn transfer" id="private-transfer-btn" disabled>
+              🔄 Private Transfer
             </button>
           </div>
         </div>
+      </div>
+      
+      <!-- Footer -->
+      <div class="footer">
+        <p>Built by <strong>X Layer Team</strong> · ZK Privacy · Secure · Decentralized</p>
+        <p style="margin-top: 6px; font-size: 11px;">© 2026 All Rights Reserved</p>
+      </div>
+    </div>
 
-        <!-- Transactions Panel -->
-        <div class="panel-content" id="transactions-panel">
-          <div class="panel-header">
-            <div class="panel-icon">📋</div>
-            <div class="panel-title">
-              <h2>Transaction History</h2>
-              <p>View all your transactions</p>
-            </div>
+    <!-- Recent Activity Card (Right Column) -->
+    <aside class="activity-sidebar">
+      <div class="activity-card">
+        <div class="panel-header">
+          <div class="panel-icon" style="background: var(--accent-purple-dim); color: var(--accent-purple);">📜</div>
+          <div class="panel-title">
+            <h2>Recent Activity</h2>
+            <p>Latest transactions</p>
           </div>
-
-          <div class="transaction-details" id="transaction-details-container">
-            <div style="text-align: center; padding: 40px; color: var(--text-muted);">
-              <p>Select a transaction to view details</p>
-            </div>
+        </div>
+        <div class="activity-list" id="activity-list">
+          <div style="text-align: center; padding: 20px; color: var(--text-muted);">
+            <p>No transactions yet</p>
           </div>
         </div>
       </div>
-    </div>
+    </aside>
   </main>
 
   <!-- Shield Modal -->
@@ -292,7 +287,10 @@
         <div class="form-group">
           <div class="form-label">
             <span>Amount</span>
-            <button class="max-btn" data-mode="shield">MAX</button>
+            <div class="quick-btns">
+              <button class="quick-btn" data-mode="shield" data-action="random">RANDOM</button>
+              <button class="quick-btn" data-mode="shield" data-action="max">MAX</button>
+            </div>
           </div>
           <div class="input-wrapper">
             <input type="text" class="form-input" id="shield-amount" placeholder="0.0" value="10">
@@ -335,7 +333,10 @@
         <div class="form-group">
           <div class="form-label">
             <span>Amount</span>
-            <button class="max-btn" data-mode="unshield">MAX</button>
+            <div class="quick-btns">
+              <button class="quick-btn" data-mode="unshield" data-action="random">RANDOM</button>
+              <button class="quick-btn" data-mode="unshield" data-action="max">MAX</button>
+            </div>
           </div>
           <div class="input-wrapper">
             <input type="text" class="form-input" id="unshield-amount" placeholder="0.0">

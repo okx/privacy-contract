@@ -56,6 +56,60 @@ class PrivacyWalletApp {
       });
     }
 
+    // Convert mode toggle
+    this.convertMode = 'shield'; // Default mode
+    const convertSwitchBtn = document.getElementById('convert-switch-btn');
+    
+    if (convertSwitchBtn) {
+      convertSwitchBtn.addEventListener('click', () => this.toggleConvertMode());
+    }
+
+    // Convert action button
+    const convertActionBtn = document.getElementById('convert-action-btn');
+    if (convertActionBtn) {
+      convertActionBtn.addEventListener('click', () => {
+        const amountInput = document.getElementById('convert-amount');
+        if (this.convertMode === 'shield') {
+          handleShield(amountInput.value.trim());
+        } else {
+          handleUnshield(amountInput.value.trim());
+        }
+      });
+    }
+
+    // Convert quick buttons (RANDOM and MAX)
+    const convertRandomBtn = document.getElementById('convert-random-btn');
+    const convertMaxBtn = document.getElementById('convert-max-btn');
+    
+    if (convertRandomBtn) {
+      convertRandomBtn.addEventListener('click', () => {
+        const amountInput = document.getElementById('convert-amount');
+        const balance = this.convertMode === 'shield' 
+          ? parseFloat(walletState.publicBalance) || 0
+          : parseFloat(walletState.privateBalance) || 0;
+        
+        // Generate random integer between 1 and half of balance
+        const maxRandom = Math.max(1, Math.floor(balance / 2));
+        const randomAmount = Math.floor(Math.random() * maxRandom);
+        amountInput.value = randomAmount.toString();
+        // Trigger input event to update button state
+        amountInput.dispatchEvent(new Event('input'));
+      });
+    }
+    
+    if (convertMaxBtn) {
+      convertMaxBtn.addEventListener('click', () => {
+        const amountInput = document.getElementById('convert-amount');
+        if (this.convertMode === 'shield') {
+          amountInput.value = walletState.publicBalance;
+        } else {
+          amountInput.value = walletState.privateBalance;
+        }
+        // Trigger input event to update button state
+        amountInput.dispatchEvent(new Event('input'));
+      });
+    }
+
     // Shield/Unshield sidebar buttons
     const sidebarShieldBtn = document.getElementById('sidebar-shield-btn');
     const sidebarUnshieldBtn = document.getElementById('sidebar-unshield-btn');
@@ -129,29 +183,72 @@ class PrivacyWalletApp {
       });
     }
 
-    // MAX buttons
-    document.querySelectorAll('.max-btn').forEach(btn => {
+    // Quick buttons (RANDOM and MAX)
+    document.querySelectorAll('.quick-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const mode = e.target.dataset.mode;
+        const action = e.target.dataset.action;
+        
+        let balance = 0;
+        let amountInput;
         
         if (mode === 'erc20') {
-          const amountInput = document.getElementById('erc20-amount');
-          amountInput.value = walletState.publicBalance;
+          amountInput = document.getElementById('erc20-amount');
+          balance = parseFloat(walletState.publicBalance) || 0;
         } else if (mode === 'private') {
-          const amountInput = document.getElementById('private-amount');
-          amountInput.value = walletState.privateBalance;
+          amountInput = document.getElementById('private-amount');
+          balance = parseFloat(walletState.privateBalance) || 0;
         } else if (mode === 'shield') {
-          const amountInput = document.getElementById('shield-amount');
-          amountInput.value = walletState.publicBalance;
+          amountInput = document.getElementById('shield-amount');
+          balance = parseFloat(walletState.publicBalance) || 0;
         } else if (mode === 'unshield') {
-          const amountInput = document.getElementById('unshield-amount');
-          amountInput.value = walletState.privateBalance;
+          amountInput = document.getElementById('unshield-amount');
+          balance = parseFloat(walletState.privateBalance) || 0;
+        }
+        
+        if (amountInput) {
+          if (action === 'random') {
+            // Generate random integer between 1 and half of balance
+            const maxRandom = Math.max(1, Math.floor(balance / 2));
+            const randomAmount = Math.floor(Math.random() * maxRandom) + 1;
+            amountInput.value = randomAmount.toString();
+          } else {
+            amountInput.value = balance.toFixed(2);
+          }
+          // Trigger input event to update button state
+          amountInput.dispatchEvent(new Event('input'));
         }
       });
     });
 
-    // Private transfer address input with debounced lookup
+    // ERC20 Transfer validation
+    const erc20RecipientInput = document.getElementById('erc20-recipient');
+    const erc20AmountInput = document.getElementById('erc20-amount');
+    
+    const validateERC20Form = () => {
+      if (!erc20TransferBtn) return;
+      
+      const recipient = erc20RecipientInput?.value.trim() || '';
+      const amount = erc20AmountInput?.value.trim() || '';
+      
+      const isValidAddress = /^0x[a-fA-F0-9]{40}$/.test(recipient);
+      const isValidAmount = amount && !isNaN(amount) && parseFloat(amount) > 0;
+      
+      erc20TransferBtn.disabled = !(isValidAddress && isValidAmount);
+    };
+    
+    if (erc20RecipientInput) {
+      erc20RecipientInput.addEventListener('input', validateERC20Form);
+    }
+    if (erc20AmountInput) {
+      erc20AmountInput.addEventListener('input', validateERC20Form);
+    }
+    validateERC20Form(); // Initial check
+
+    // Private transfer address input with debounced lookup and validation
     const privateRecipientInput = document.getElementById('private-recipient');
+    const privateAmountInput = document.getElementById('private-amount');
+    
     if (privateRecipientInput) {
       const debouncedLookup = debounce((address) => {
         if (!address) {
@@ -170,18 +267,24 @@ class PrivacyWalletApp {
         debouncedLookup(e.target.value.trim());
       });
     }
-
-    // Tab switching
-    document.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
-        const tabText = e.target.textContent;
-        let tabName = 'transfer';
-        if (tabText.includes('💸')) tabName = 'transfer';
-        else if (tabText.includes('📋')) tabName = 'transactions';
-        
-        UI.switchTab(tabName);
+    
+    // Trigger validation when amount changes
+    if (privateAmountInput) {
+      privateAmountInput.addEventListener('input', () => {
+        // Directly call updateTransferButtonState with current lookup result
+        const address = privateRecipientInput?.value.trim();
+        if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
+          // Re-check recipient status
+          handleTransferLookup(address);
+        } else {
+          // No valid address, disable button
+          if (privateTransferBtn) {
+            privateTransferBtn.disabled = true;
+            privateTransferBtn.style.opacity = '0.5';
+          }
+        }
       });
-    });
+    }
 
     // Custom events
     window.addEventListener('register-mpk', () => registerMPK());
@@ -189,14 +292,10 @@ class PrivacyWalletApp {
     window.addEventListener('show-transaction', (e) => {
       const tx = walletState.transactions[e.detail.index];
       if (tx) {
-        UI.switchTab('transactions');
         UI.showTransactionDetails(tx, walletState.chainId);
       }
     });
 
-    window.addEventListener('show-transaction-list', () => {
-      UI.showTransactionList(walletState.transactions);
-    });
 
     window.addEventListener('copy-to-clipboard', async (e) => {
       const success = await copyToClipboard(e.detail.text);
@@ -204,17 +303,6 @@ class PrivacyWalletApp {
         console.log('Copied to clipboard');
       } else {
         console.error('Failed to copy to clipboard');
-      }
-    });
-
-    // Handle transfer tab opened event
-    window.addEventListener('transfer-tab-opened', () => {
-      const privateRecipientInput = document.getElementById('private-recipient');
-      if (privateRecipientInput) {
-        const address = privateRecipientInput.value.trim();
-        if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
-          handleTransferLookup(address);
-        }
       }
     });
 
@@ -230,8 +318,13 @@ class PrivacyWalletApp {
     const erc20Form = document.getElementById('erc20-transfer-form');
     const privateForm = document.getElementById('private-transfer-form');
     const privacyStatus = document.getElementById('privacy-status');
+    const logoImg = document.querySelector('.logo-img');
     
     if (isEnabled) {
+      // Add privacy-active class to logo
+      if (logoImg) {
+        logoImg.classList.add('privacy-active');
+      }
       // Switch to private mode
       erc20Form.style.display = 'none';
       privateForm.style.display = 'block';
@@ -259,6 +352,11 @@ class PrivacyWalletApp {
         window.dispatchEvent(new CustomEvent('register-mpk'));
       }
     } else {
+      // Remove privacy-active class from logo
+      if (logoImg) {
+        logoImg.classList.remove('privacy-active');
+      }
+      
       // Switch to ERC20 mode
       erc20Form.style.display = 'block';
       privateForm.style.display = 'none';
@@ -287,6 +385,28 @@ class PrivacyWalletApp {
       modal.classList.remove('active');
     }
   }
+
+  toggleConvertMode() {
+    const convertActionBtn = document.getElementById('convert-action-btn');
+    
+    if (this.convertMode === 'shield') {
+      // Switch to Unshield mode
+      this.convertMode = 'unshield';
+      if (convertActionBtn) {
+        convertActionBtn.textContent = 'Unshield';
+        convertActionBtn.classList.remove('shield');
+        convertActionBtn.classList.add('unshield');
+      }
+    } else {
+      // Switch to Shield mode
+      this.convertMode = 'shield';
+      if (convertActionBtn) {
+        convertActionBtn.textContent = 'Shield';
+        convertActionBtn.classList.remove('unshield');
+        convertActionBtn.classList.add('shield');
+      }
+    }
+  }
 }
 
 // Initialize app when DOM is ready
@@ -295,5 +415,3 @@ window.addEventListener('DOMContentLoaded', async () => {
   await app.init();
 });
 
-// Make switchTab globally available for HTML onclick handlers
-window.switchTab = UI.switchTab;

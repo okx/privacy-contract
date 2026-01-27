@@ -42,24 +42,6 @@ async function broadcast(type, transaction) {
   return result;
 }
 
-// Request broadcaster to update Merkle root
-async function requestUpdateRoot() {
-  try {
-    const response = await fetch('/api/update-root', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const result = await response.json();
-    if (!result.success) {
-      console.warn('Update root failed:', result.error);
-    } else {
-      console.log('✅ Update root confirmed in block:', result.blockNumber);
-    }
-  } catch (error) {
-    console.warn('Update root request failed:', error.message);
-  }
-}
-
 // Helper: Format transaction for contract
 function formatTransactionForContract(transaction) {
   const ethersLib = ensureEthers();
@@ -143,7 +125,11 @@ export async function handleShield(amountValue) {
   }
 
   const ethersLib = ensureEthers();
+  
+  // Set loading on both modal button and convert button
   UI.setButtonLoading('#shield-btn', true, 'Shielding...');
+  UI.setButtonLoading('#convert-action-btn', true, 'Shielding...');
+  
   let shieldTx = null;
 
   try {
@@ -259,6 +245,7 @@ export async function handleShield(amountValue) {
     
   } finally {
     UI.setButtonLoading('#shield-btn', false);
+    UI.setButtonLoading('#convert-action-btn', false);
   }
 }
 
@@ -298,11 +285,13 @@ export async function handleUnshield(amountValue) {
   }
 
   UI.setButtonLoading('#unshield-btn', true, 'Sign to confirm...');
+  UI.setButtonLoading('#convert-action-btn', true, 'Confirming...');
 
   try {
     await requestSignatureConfirmation();
     
     UI.setButtonLoading('#unshield-btn', true, 'Preparing...');
+    UI.setButtonLoading('#convert-action-btn', true, 'Preparing...');
     const recipient = walletState.account;
 
     // Prepare unshield transaction
@@ -335,6 +324,7 @@ export async function handleUnshield(amountValue) {
 
     // Broadcast via server
     UI.setButtonLoading('#unshield-btn', true, 'Broadcasting...');
+    UI.setButtonLoading('#convert-action-btn', true, 'Broadcasting...');
     const result = await broadcast('unshield', formattedTransaction);
     
     // Add pending transaction
@@ -342,6 +332,7 @@ export async function handleUnshield(amountValue) {
 
     // Wait for transaction confirmation
     UI.setButtonLoading('#unshield-btn', true, 'Confirming...');
+    UI.setButtonLoading('#convert-action-btn', true, 'Confirming...');
     const receipt = await walletState.provider.waitForTransaction(result.txHash);
     
     if (receipt.status === 0) {
@@ -354,6 +345,7 @@ export async function handleUnshield(amountValue) {
 
     // Scan transaction and refresh balances (must complete before unlocking button)
     UI.setButtonLoading('#unshield-btn', true, 'Updating balances...');
+    UI.setButtonLoading('#convert-action-btn', true, 'Updating...');
     await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
     await refreshBalances();
     console.log('✅ Unshield scanned and balances updated');
@@ -362,6 +354,7 @@ export async function handleUnshield(amountValue) {
     console.error('Unshield failed:', error);
   } finally {
     UI.setButtonLoading('#unshield-btn', false);
+    UI.setButtonLoading('#convert-action-btn', false);
   }
 }
 

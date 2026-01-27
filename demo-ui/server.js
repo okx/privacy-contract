@@ -212,13 +212,25 @@ async function handleApiRequest(req, res, pathname) {
         return sendJson(res, 400, { success: false, error: `Invalid transaction type: ${type}` });
       }
 
+      // Get current nonce for manual management
+      let nonce = await broadcastWallet.getTransactionCount('pending');
+
       // Check if root needs updating first
       const isRootUpdated = await railgun.isRootUpdated();
       if (!isRootUpdated) {
         console.log('   ⚠️  Root not updated, sending updateRoot first...');
-        const updateRootTx = await railgun.updateRoot({ gasLimit: 700000 });
-        console.log('   🔄 UpdateRoot TX sent:', updateRootTx.hash, '(will be confirmed before transact)');
-        // Don't wait - next transaction will have higher nonce, ensuring updateRoot executes first
+        const updateRootTx = await railgun.updateRoot({ gasLimit: 700000, nonce });
+        console.log('   🔄 UpdateRoot TX sent:', updateRootTx.hash);
+        nonce++; // Increment nonce for next transaction
+        
+        // Wait for confirmation in background (for logging only)
+        updateRootTx.wait()
+          .then(receipt => {
+            console.log('   ✅ UpdateRoot confirmed in block:', receipt.blockNumber);
+          })
+          .catch(error => {
+            console.error('   ❌ UpdateRoot confirmation failed:', error.message);
+          });
       }
 
       // Estimate gas
@@ -233,8 +245,10 @@ async function handleApiRequest(req, res, pathname) {
 
       // Execute transact transaction
       console.log(`   Executing ${type}...`);
-      const tx = await railgun.transact([transaction], { gasLimit });
+      const tx = await railgun.transact([transaction], { gasLimit, nonce });
+      nonce++; // Increment nonce for next transaction
       console.log('   TX Hash:', tx.hash);
+
 
       // Return txHash immediately to frontend (don't wait for anything)
       sendJson(res, 200, {
@@ -243,14 +257,27 @@ async function handleApiRequest(req, res, pathname) {
         pending: true
       });
 
-      // Wait for confirmation in background (for logging only)
-      console.log('   Waiting for confirmation...');
-      waitForReceipt(tx.hash).then(receipt => {
-        console.log(`   ✅ ${type} confirmed in block:`, receipt.blockNumber);
-      }).catch(error => {
-        console.error(`   ❌ ${type} confirmation failed:`, error.message);
-      });
-      
+
+      const updateRootTx = await railgun.updateRoot({ gasLimit: 700000, nonce });
+      console.log('   🔄 UpdateRoot TX sent:', updateRootTx.hash);
+
+      // Wait for confirmations in background (for logging only)
+      tx.wait()
+        .then(receipt => {
+          console.log(`   ✅ ${type} confirmed in block:`, receipt.blockNumber);
+        })
+        .catch(error => {
+          console.error(`   ❌ ${type} confirmation failed:`, error.message);
+        });
+
+      updateRootTx.wait()
+        .then(receipt => {
+          console.log('   ✅ UpdateRoot confirmed in block:', receipt.blockNumber);
+        })
+        .catch(error => {
+          console.error('   ❌ UpdateRoot confirmation failed:', error.message);
+        });
+
       return;
 
     } catch (error) {
@@ -291,49 +318,6 @@ async function handleApiRequest(req, res, pathname) {
       });
     } catch (error) {
       return sendJson(res, 500, { available: false, error: error.message });
-    }
-  }
-
-  // POST /api/update-root - Update Merkle root (for shield transactions)
-  if (pathname === '/api/update-root' && req.method === 'POST') {
-    if (!broadcastWallet) {
-      // Try to reinitialize
-      await initializeBroadcast();
-      if (!broadcastWallet) {
-        return sendJson(res, 503, { success: false, error: 'Broadcast not available. Is blockchain running?' });
-      }
-    }
-
-    try {
-      console.log('\n🔄 Update root request');
-
-      const deployments = loadDeployments();
-      const railgunAddress = deployments && deployments.proxy;
-
-      if (!railgunAddress) {
-        return sendJson(res, 400, { success: false, error: 'deployments.json not found or proxy address not set' });
-      }
-
-      const railgun = new ethers.Contract(railgunAddress, RAILGUN_ABI, broadcastWallet);
-
-      console.log('   Sending updateRoot...');
-      const updateRootTx = await railgun.updateRoot({ gasLimit: 700000 });
-      console.log('   UpdateRoot TX sent:', updateRootTx.hash);
-      
-      // Wait for confirmation before returning (ensures root is updated)
-      console.log('   Waiting for confirmation...');
-      const receipt = await waitForReceipt(updateRootTx.hash);
-      console.log('   ✅ Root updated in block:', receipt.blockNumber);
-
-      return sendJson(res, 200, {
-        success: true,
-        txHash: updateRootTx.hash,
-        blockNumber: receipt.blockNumber
-      });
-
-    } catch (error) {
-      console.error('   ❌ Update root failed:', error.message);
-      return sendJson(res, 500, { success: false, error: error.message });
     }
   }
 
@@ -400,7 +384,6 @@ server.listen(PORT, async () => {
   
   console.log('\n🔗 API Endpoints:');
   console.log('   POST /api/broadcast        - Broadcast transaction');
-  console.log('   POST /api/update-root      - Update Merkle root');
   console.log('   GET  /api/broadcast-status - Get broadcast service status');
   console.log('   GET  /api/session          - Get server session ID');
   console.log('   GET  /api/network-config   - Get network configuration');

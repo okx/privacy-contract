@@ -60,12 +60,39 @@ export function updateConnectButton(state) {
   const connectBtn = domCache.get('connectBtn');
   if (!connectBtn) return;
   
+  const privacyToggle = document.getElementById('privacy-mode-toggle');
+  const privacyStatus = document.getElementById('privacy-status');
+  
   if (state.account) {
     connectBtn.textContent = formatAddress(state.account) + ' ▾';
     connectBtn.classList.add('connected');
+    
+    // Enable privacy toggle when connected
+    if (privacyToggle) {
+      privacyToggle.disabled = false;
+    }
   } else {
     connectBtn.textContent = 'Connect Wallet';
     connectBtn.classList.remove('connected');
+    
+    // Disable privacy toggle when disconnected
+    if (privacyToggle) {
+      privacyToggle.disabled = true;
+      privacyToggle.checked = false;
+    }
+    
+    // Update status text when not connected
+    if (privacyStatus) {
+      const statusText = privacyStatus.querySelector('.status-text');
+      const statusDot = privacyStatus.querySelector('.status-dot');
+      if (statusText) {
+        statusText.textContent = 'Not activated';
+      }
+      if (statusDot) {
+        statusDot.classList.remove('registered');
+        statusDot.classList.add('unregistered');
+      }
+    }
   }
 }
 
@@ -80,6 +107,40 @@ export function updateBalances(state) {
   privateElements.forEach(el => {
     el.textContent = state.privateBalance + ' ' + erc20TokenInfo.symbol;
   });
+  
+  // Update Privacy Overview
+  updatePrivacyOverview(state);
+}
+
+function updatePrivacyOverview(state) {
+  const totalEl = document.getElementById('overview-total');
+  const ratioEl = document.getElementById('overview-ratio');
+  const fillEl = document.getElementById('privacy-ratio-fill');
+  const lastActiveEl = document.getElementById('overview-last-active');
+  
+  const publicBalance = parseFloat(state.publicBalance) || 0;
+  const privateBalance = parseFloat(state.privateBalance) || 0;
+  const total = publicBalance + privateBalance;
+  
+  if (totalEl) {
+    totalEl.textContent = total.toFixed(2) + ' ' + erc20TokenInfo.symbol;
+  }
+  
+  if (total > 0) {
+    const ratio = Math.round((privateBalance / total) * 100);
+    if (ratioEl) ratioEl.textContent = ratio + '%';
+    if (fillEl) fillEl.style.width = ratio + '%';
+  } else {
+    if (ratioEl) ratioEl.textContent = '0%';
+    if (fillEl) fillEl.style.width = '0%';
+  }
+  
+  if (lastActiveEl && state.transactions.length > 0) {
+    const latestTx = state.transactions[0];
+    lastActiveEl.textContent = getTimeAgo(latestTx.timestamp);
+  } else if (lastActiveEl) {
+    lastActiveEl.textContent = '—';
+  }
 }
 
 // Account info removed - using Connect button in header instead
@@ -133,8 +194,9 @@ function updateShieldButtonState(isRegistered) {
   const shieldBtn = document.getElementById('shield-btn');
   const sidebarShieldBtn = document.getElementById('sidebar-shield-btn');
   const sidebarUnshieldBtn = document.getElementById('sidebar-unshield-btn');
+  const convertActionBtn = document.getElementById('convert-action-btn');
   
-  const buttons = [shieldBtn, sidebarShieldBtn, sidebarUnshieldBtn].filter(btn => btn);
+  const buttons = [shieldBtn, sidebarShieldBtn, sidebarUnshieldBtn, convertActionBtn].filter(btn => btn);
   
   buttons.forEach(btn => {
     if (isRegistered) {
@@ -255,7 +317,15 @@ function updateTransferButtonState(recipientRegistered) {
   const transferBtn = document.getElementById('private-transfer-btn');
   if (!transferBtn) return;
   
-  if (recipientRegistered) {
+  // Also check if amount is valid
+  const amountInput = document.getElementById('private-amount');
+  const amount = amountInput?.value.trim() || '';
+  const isValidAmount = amount && !isNaN(amount) && parseFloat(amount) > 0;
+  
+  // Button enabled only if recipient registered AND amount is valid
+  const shouldEnable = recipientRegistered && isValidAmount;
+  
+  if (shouldEnable) {
     transferBtn.disabled = false;
     transferBtn.style.opacity = '1';
     transferBtn.style.cursor = 'pointer';
@@ -264,60 +334,102 @@ function updateTransferButtonState(recipientRegistered) {
     transferBtn.disabled = true;
     transferBtn.style.opacity = '0.5';
     transferBtn.style.cursor = 'not-allowed';
-    transferBtn.title = 'Recipient must be registered first';
+    
+    if (!recipientRegistered) {
+      transferBtn.title = 'Recipient must activate privacy first';
+    } else if (!isValidAmount) {
+      transferBtn.title = 'Please enter a valid amount';
+    }
   }
 }
 
 export function updateTransactionHistory(transactions) {
+  // Update both sidebar history (if exists) and activity list
   const historyList = domCache.get('historyList');
-  if (!historyList) return;
-
-  if (transactions.length === 0) {
-    historyList.innerHTML = `
-      <div style="text-align: center; padding: 20px; color: var(--text-muted);">
-        <p>No transactions yet</p>
-      </div>
-    `;
-    return;
-  }
-
-  historyList.innerHTML = transactions.slice(0, 5).map((tx, index) => `
-    <div class="history-item" data-tx-index="${index}">
-      <div class="history-icon ${tx.type}-tx">${tx.icon}</div>
-      <div class="history-info">
-        <h4>${tx.title}${tx.status === 'failed' ? ' ❌' : tx.status === 'pending' ? ' ⏳' : ' ✅'}</h4>
-        <p>${tx.description}</p>
-        ${tx.txHash ? `<p style="font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: monospace;">${tx.txHash.slice(0, 10)}...${tx.txHash.slice(-8)}</p>` : ''}
-      </div>
-      <div class="history-amount">
-        <div class="value">${tx.amount}</div>
-        <div class="time">${getTimeAgo(tx.timestamp)}</div>
-      </div>
-    </div>
-  `).join('');
+  const activityList = document.getElementById('activity-list');
   
-  // Add click listeners
-  historyList.querySelectorAll('.history-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const index = parseInt(item.dataset.txIndex);
-      window.dispatchEvent(new CustomEvent('show-transaction', { detail: { index } }));
+  const generateHistoryHTML = (txs, maxCount) => {
+    if (txs.length === 0) {
+      return `
+        <div style="text-align: center; padding: 20px; color: var(--text-muted);">
+          <p>No transactions yet</p>
+        </div>
+      `;
+    }
+    
+    return txs.slice(0, maxCount).map((tx, index) => `
+      <div class="history-item" data-tx-index="${index}">
+        <div class="history-icon ${tx.type}-tx">${tx.icon}</div>
+        <div class="history-info">
+          <h4>${tx.title}${tx.status === 'failed' ? ' ❌' : tx.status === 'pending' ? ' ⏳' : ' ✅'}</h4>
+          <p>${tx.description}</p>
+        </div>
+        <div class="history-amount">
+          <div class="value">${tx.amount}</div>
+          <div class="time">${getTimeAgo(tx.timestamp)}</div>
+        </div>
+      </div>
+    `).join('');
+  };
+  
+  // Update sidebar history (if exists) - show 5 items
+  if (historyList) {
+    historyList.innerHTML = generateHistoryHTML(transactions, 5);
+    
+    historyList.querySelectorAll('.history-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const index = parseInt(item.dataset.txIndex);
+        window.dispatchEvent(new CustomEvent('show-transaction', { detail: { index } }));
+      });
     });
-  });
+  }
+  
+  // Update activity list - show 10 items
+  if (activityList) {
+    activityList.innerHTML = generateHistoryHTML(transactions, 10);
+    
+    activityList.querySelectorAll('.history-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const index = parseInt(item.dataset.txIndex);
+        window.dispatchEvent(new CustomEvent('show-transaction', { detail: { index } }));
+      });
+    });
+  }
 }
 
 export function showTransactionDetails(tx, chainId) {
-  const container = document.getElementById('transaction-details-container');
-  if (!container) return;
+  // Hide transfer panel and show transaction detail view
+  const transferPanel = document.getElementById('transfer-panel');
+  const detailView = document.getElementById('transaction-detail-view');
+  
+  if (!detailView) return;
+  
+  if (transferPanel) {
+    transferPanel.style.display = 'none';
+  }
+  
+  detailView.style.display = 'block';
+  
+  const container = detailView;
 
   const statusIcon = tx.status === 'success' ? '✅' : tx.status === 'pending' ? '⏳' : '❌';
   const statusText = tx.status === 'success' ? 'Success' : tx.status === 'pending' ? 'Pending' : 'Failed';
   const statusColor = tx.status === 'success' ? 'var(--accent-green)' : tx.status === 'pending' ? 'var(--accent-orange)' : 'var(--danger)';
 
   container.innerHTML = `
-    <div class="transaction-detail-card" style="max-width: 600px; margin: 0 auto;">
-      <button class="back-to-list-btn" style="margin-bottom: 16px; padding: 8px 16px; background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
-        ← Back to List
-      </button>
+    <div class="transaction-detail-card">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="panel-icon" style="width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--accent-blue-dim); color: var(--accent-blue);">📋</div>
+          <div>
+            <h2 style="margin: 0; font-size: 22px; font-weight: 600;">Transaction Details</h2>
+            <p style="margin: 4px 0 0 0; font-size: 13px; color: var(--text-secondary);">View transaction information</p>
+          </div>
+        </div>
+        <button class="back-to-list-btn" style="padding: 8px 16px; background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px;">
+          ← Back
+        </button>
+      </div>
       
       <div class="transaction-detail-header" style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border);">
         <div style="font-size: 32px;">${tx.icon}</div>
@@ -369,7 +481,16 @@ export function showTransactionDetails(tx, chainId) {
   const backBtn = container.querySelector('.back-to-list-btn');
   if (backBtn) {
     backBtn.addEventListener('click', () => {
-      window.dispatchEvent(new CustomEvent('show-transaction-list'));
+      // Hide detail view and show transfer panel
+      const transferPanel = document.getElementById('transfer-panel');
+      const detailView = document.getElementById('transaction-detail-view');
+      
+      if (detailView) {
+        detailView.style.display = 'none';
+      }
+      if (transferPanel) {
+        transferPanel.style.display = 'block';
+      }
     });
   }
   
@@ -423,44 +544,7 @@ export function showTransactionList(transactions) {
   });
 }
 
-export function switchTab(tabName) {
-  // Update tabs
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.classList.remove('active', 'transfer', 'transactions');
-  });
-  
-  // Find and activate tab
-  const tabButton = Array.from(document.querySelectorAll('.tab')).find(btn => 
-    btn.textContent.includes(
-      tabName === 'transfer' ? '💸' : 
-      tabName === 'transactions' ? '📋' : ''
-    )
-  );
-  
-  if (tabButton) {
-    tabButton.classList.add('active', tabName);
-  }
-
-  // Update panels
-  document.querySelectorAll('.panel-content').forEach(panel => {
-    panel.classList.remove('active');
-  });
-  
-  const panel = document.getElementById(tabName + '-panel');
-  if (panel) {
-    panel.classList.add('active');
-  }
-  
-  // Show transaction list if switching to transactions tab
-  if (tabName === 'transactions') {
-    window.dispatchEvent(new CustomEvent('show-transaction-list'));
-  }
-  
-  // Trigger MPK lookup if switching to transfer tab
-  if (tabName === 'transfer') {
-    window.dispatchEvent(new CustomEvent('transfer-tab-opened'));
-  }
-}
+// switchTab function removed - no longer needed (single page layout)
 
 export function setButtonLoading(selector, isLoading, loadingText = 'Loading...') {
   const btn = document.querySelector(selector);
@@ -475,7 +559,21 @@ export function setButtonLoading(selector, isLoading, loadingText = 'Loading...'
     btn.innerHTML = `<span class="spinner"></span> ${loadingText}`;
   } else {
     btn.disabled = false;
-    btn.textContent = btn.dataset.originalText || btn.textContent;
+    
+    // For convert-action-btn, restore based on current mode
+    if (selector === '#convert-action-btn') {
+      // Don't use saved text, determine from class
+      if (btn.classList.contains('shield')) {
+        btn.textContent = 'Shield';
+      } else if (btn.classList.contains('unshield')) {
+        btn.textContent = 'Unshield';
+      } else {
+        btn.textContent = btn.dataset.originalText || 'Shield';
+      }
+    } else {
+      btn.textContent = btn.dataset.originalText || btn.textContent;
+    }
+    
     // Clear the saved text after restoring
     delete btn.dataset.originalText;
   }
