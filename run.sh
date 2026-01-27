@@ -89,11 +89,14 @@ setup_rapidsnark_server() {
 setup_rapidsnark_local() {
     echo "Rapidsnark mode: local (standalone)"
 
-    if [ ! -x "/usr/local/bin/rapidsnark" ]; then
-        echo "rapidsnark not found, installing..."
+    # Use RAPIDSNARK_PATH from env, default to /usr/local/bin/rapidsnark
+    local rapidsnark_bin="${RAPIDSNARK_PATH:-/usr/local/bin/rapidsnark}"
+
+    if [ ! -x "$rapidsnark_bin" ]; then
+        echo "rapidsnark not found at $rapidsnark_bin, installing..."
         ./install_rapidsnark.sh
     else
-        echo "rapidsnark already installed: /usr/local/bin/rapidsnark"
+        echo "rapidsnark already installed: $rapidsnark_bin"
     fi
 }
 
@@ -102,9 +105,10 @@ setup_rapidsnark
 
 # Build local circuits if enabled
 if [ "$USE_LOCAL_CIRCUITS" = "true" ]; then
-    if [ -n "$CIRCUITS_V2_DIR" ] && [ -d "$CIRCUITS_V2_DIR" ]; then
-        pushd "$CIRCUITS_V2_DIR" > /dev/null
-        ./run.sh
+    if [ -n "$LOCAL_CIRCUITS_PATH" ] && [ -d "$LOCAL_CIRCUITS_PATH" ]; then
+        pushd "$LOCAL_CIRCUITS_PATH" > /dev/null
+        npm install
+        "${SCRIPT_DIR}/build_circuit.sh"
         popd > /dev/null
     elif [ -d "${SCRIPT_DIR}/tmp/rapidsnark" ]; then
         echo "Using local circuits from ${SCRIPT_DIR}/tmp/rapidsnark"

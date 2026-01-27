@@ -34,3 +34,4 @@ node.out
 deployments.json
 .env
 tmp/
+temp_*.json

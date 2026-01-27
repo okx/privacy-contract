@@ -14,11 +14,15 @@ const RAPIDSNARK_PATH = process.env.RAPIDSNARK_PATH || '/usr/local/bin/rapidsnar
 const RAPIDSNARK_SERVER_URL = process.env.RAPIDSNARK_SERVER_URL || 'http://localhost:8080';
 const RAPIDSNARK_CIRCUIT = process.env.RAPIDSNARK_CIRCUIT || '02x03';
 
-// Cache directory for artifact files (avoid writing large files every time)
+// Local circuits config (import from artifacts)
+const USE_LOCAL_CIRCUITS = process.env.USE_LOCAL_CIRCUITS === 'true';
+const LOCAL_CIRCUITS_PATH = process.env.LOCAL_CIRCUITS_PATH || path.join(__dirname, '../../../circuits-v2');
+
+// Cache directory for artifact files (only used when NOT using local circuits)
 const ARTIFACT_CACHE_DIR = path.join(os.tmpdir(), 'rapidsnark-artifacts');
 
-// Ensure cache directory exists
-if (USE_RAPIDSNARK && !fs.existsSync(ARTIFACT_CACHE_DIR)) {
+// Ensure cache directory exists (only when needed)
+if (USE_RAPIDSNARK && !USE_LOCAL_CIRCUITS && !fs.existsSync(ARTIFACT_CACHE_DIR)) {
   fs.mkdirSync(ARTIFACT_CACHE_DIR, { recursive: true });
 }
 
@@ -26,7 +30,28 @@ if (USE_RAPIDSNARK && !fs.existsSync(ARTIFACT_CACHE_DIR)) {
 const artifactCache = new Map<string, { wasmPath: string; zkeyPath: string }>();
 
 /**
- * Get or create cached artifact files
+ * Get circuit name from nullifiers/commitments (e.g., "02x03")
+ */
+function circuitConfigToName(nullifiers: number, commitments: number): string {
+  return `${nullifiers.toString().padStart(2, '0')}x${commitments.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Get local artifact file paths directly (avoids /tmp copy)
+ */
+function getLocalFilePaths(nullifiers: number, commitments: number): { wasmPath: string; zkeyPath: string } {
+  const name = circuitConfigToName(nullifiers, commitments);
+  const buildDir = path.join(LOCAL_CIRCUITS_PATH, 'build');
+  const zkeyDir = path.join(LOCAL_CIRCUITS_PATH, 'zkeys');
+
+  return {
+    wasmPath: path.join(buildDir, `${name}_js/${name}.wasm`),
+    zkeyPath: path.join(zkeyDir, `${name}.zkey`),
+  };
+}
+
+/**
+ * Get or create cached artifact files (for non-local circuits)
  */
 function getCachedArtifactPaths(artifact: Artifact): { wasmPath: string; zkeyPath: string } {
   // Use a simple hash based on file sizes (fast approximation)
@@ -97,14 +122,37 @@ function formatProof(proof: SnarkjsProof): SolidityProof {
  *
  * @param artifact - circuit artifact
  * @param inputs - circuit inputs
+ * @param nullifiers - number of nullifiers (for local path lookup)
+ * @param commitments - number of commitments (for local path lookup)
  * @returns proof
  */
-async function proveWithRapidsnark(artifact: Artifact, inputs: unknown): Promise<ProofBundle> {
+async function proveWithRapidsnark(
+  artifact: Artifact,
+  inputs: unknown,
+  nullifiers?: number,
+  commitments?: number,
+): Promise<ProofBundle> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rapidsnark-'));
 
   try {
-    // Get cached artifact paths (avoids writing large files every time)
-    const { wasmPath, zkeyPath } = getCachedArtifactPaths(artifact);
+    // Get artifact file paths
+    let wasmPath: string;
+    let zkeyPath: string;
+
+    if (USE_LOCAL_CIRCUITS && nullifiers !== undefined && commitments !== undefined) {
+      // Use local file paths directly (no /tmp copy needed)
+      const localPaths = getLocalFilePaths(nullifiers, commitments);
+      wasmPath = localPaths.wasmPath;
+      zkeyPath = localPaths.zkeyPath;
+      if (DEBUG_TIMING) {
+        console.log(`   📁 Using local circuit files directly: ${zkeyPath}`);
+      }
+    } else {
+      // Fall back to cached artifact paths (writes to /tmp)
+      const cached = getCachedArtifactPaths(artifact);
+      wasmPath = cached.wasmPath;
+      zkeyPath = cached.zkeyPath;
+    }
 
     // Define temp file paths for this run
     const witnessPath = path.join(tmpDir, 'witness.wtns');
@@ -262,15 +310,22 @@ async function proveWithRapidsnarkServer(inputs: unknown, circuit: string = RAPI
  *
  * @param artifact - circuit artifact
  * @param inputs - circuit inputs
+ * @param nullifiers - number of nullifiers (for local path lookup)
+ * @param commitments - number of commitments (for local path lookup)
  * @returns proof
  */
-async function prove(artifact: Artifact, inputs: unknown): Promise<ProofBundle> {
+async function prove(
+  artifact: Artifact,
+  inputs: unknown,
+  nullifiers?: number,
+  commitments?: number,
+): Promise<ProofBundle> {
   console.log("USE_RAPIDSNARK", USE_RAPIDSNARK, "RAPIDSNARK_MODE", RAPIDSNARK_MODE);
   if (USE_RAPIDSNARK) {
     if (RAPIDSNARK_MODE === 'server') {
       return proveWithRapidsnarkServer(inputs);
     }
-    return proveWithRapidsnark(artifact, inputs);
+    return proveWithRapidsnark(artifact, inputs, nullifiers, commitments);
   }
   return proveWithSnarkjs(artifact, inputs);
 }

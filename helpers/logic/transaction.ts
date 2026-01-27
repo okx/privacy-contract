@@ -589,8 +589,8 @@ async function transact(
   const tFormat = Date.now() - t0;
   t0 = Date.now();
 
-  // Generate proof
-  const proof = await prove(artifact, inputs);
+  // Generate proof (pass nullifiers/commitments for local circuit path lookup)
+  const proof = await prove(artifact, inputs, notesIn.length, notesOut.length);
   const tProve = Date.now() - t0;
   t0 = Date.now();
 
