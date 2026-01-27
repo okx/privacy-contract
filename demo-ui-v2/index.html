@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>隐私钱包</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">🔒</div>
+      <span>隐私钱包</span>
+    </div>
+    <button class="connect-btn" id="connect-btn">
+      连接钱包
+    </button>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <!-- Account Card -->
+      <div class="account-card">
+        <div class="account-header">
+          <div class="account-avatar"></div>
+          <div class="account-info">
+            <h3>我的账户</h3>
+            <p id="account-address">未连接</p>
+          </div>
+        </div>
+        
+        <!-- Privacy Toggle -->
+        <div class="privacy-toggle-section">
+          <div class="toggle-row">
+            <div class="toggle-label">
+              <span class="toggle-icon">🔒</span>
+              <span>隐私交易</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="privacy-toggle" disabled>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="toggle-status" id="privacy-status">
+            <span class="status-dot"></span>
+            <span class="status-text">请先连接钱包</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Balance Card - Clean & Simple -->
+      <div class="balance-card">
+        <div class="balance-header">
+          <span class="balance-title">💰 我的余额</span>
+          <span id="token-symbol-badge" class="token-badge">TOKEN</span>
+        </div>
+        
+        <!-- Token Info -->
+        <div id="token-info" class="token-info">
+          <span>代币: 加载中...</span>
+        </div>
+        
+        <!-- Public Balance -->
+        <div class="balance-row-simple">
+          <div class="balance-row-left">
+            <span class="balance-row-icon public">💳</span>
+            <span class="balance-row-label">公开余额</span>
+          </div>
+          <span class="balance-row-value public" id="public-balance">0.00</span>
+        </div>
+        
+        <!-- Private Balance (hidden when privacy not enabled) -->
+        <div class="balance-row-simple" id="private-balance-row" style="display: none;">
+          <div class="balance-row-left">
+            <span class="balance-row-icon private">🔐</span>
+            <span class="balance-row-label">隐私余额</span>
+          </div>
+          <span class="balance-row-value private" id="private-balance">0.00</span>
+        </div>
+        
+        <!-- Convert Button (hidden when privacy not enabled) -->
+        <button class="convert-trigger-btn" id="open-convert-modal" style="display: none;">
+          <svg class="convert-icon" width="18" height="18" viewBox="0 0 24 24">
+            <defs>
+              <linearGradient id="shieldGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#a855f7"/>
+                <stop offset="100%" style="stop-color:#6366f1"/>
+              </linearGradient>
+            </defs>
+            <path d="M12 2L4 6v6c0 5.5 3.5 10 8 11 4.5-1 8-5.5 8-11V6l-8-4z" fill="url(#shieldGrad1)"/>
+            <path d="M9 12l2 2 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          隐私存取
+        </button>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="history-card">
+        <div class="history-header">
+          <h3>📋 最近活动</h3>
+        </div>
+        <div class="history-list" id="history-list">
+          <div class="empty-state">
+            <p>暂无交易记录</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="content">
+      <!-- Transfer Card -->
+      <div class="action-card">
+        <div class="card-header">
+          <div class="card-icon transfer">💸</div>
+          <div class="card-title">
+            <h2>转账</h2>
+            <p>向其他地址发送代币</p>
+          </div>
+        </div>
+
+        <!-- Balance Type Selection -->
+        <div class="form-group" id="balance-type-group">
+          <div class="form-label">
+            <span>使用余额</span>
+          </div>
+          
+          <!-- Static display (when privacy not enabled) -->
+          <div class="balance-static-display" id="balance-static-display">
+            <span class="static-balance" id="static-public-balance">可用余额: 0.00 TOKEN（公开）</span>
+          </div>
+          
+          <!-- Toggle Switch (when privacy enabled) -->
+          <div class="balance-toggle-wrapper" id="balance-toggle-wrapper" style="display: none;">
+            <div class="toggle-switch-row">
+              <span class="toggle-balance" id="toggle-current-balance">可用余额: 0.00 TOKEN（公开）</span>
+              <label class="toggle-switch" id="balance-toggle">
+                <input type="checkbox" id="balance-toggle-input">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="toggle-label-icon">🔐</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">
+            <span>收款地址</span>
+            <span class="hint" id="transfer-hint">输入对方钱包地址</span>
+            <span class="recipient-status" id="transfer-recipient-status" style="display: none;"></span>
+          </div>
+          <div class="input-wrapper">
+            <input type="text" class="form-input" id="transfer-address" placeholder="0x...">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">
+            <span>转账金额</span>
+          </div>
+          <div class="input-wrapper">
+            <input type="text" class="form-input" id="transfer-amount" placeholder="0.0">
+            <span class="input-suffix" id="transfer-suffix">TOKEN</span>
+          </div>
+          <div class="transfer-quick-btns">
+            <button class="transfer-quick-btn" data-percent="25">25%</button>
+            <button class="transfer-quick-btn" data-percent="50">50%</button>
+            <button class="transfer-quick-btn" data-percent="75">75%</button>
+            <button class="transfer-quick-btn" data-percent="100">最大</button>
+          </div>
+        </div>
+
+        <button class="submit-btn transfer-public" id="transfer-btn" disabled>
+          💳 发送公开转账
+        </button>
+      </div>
+
+      <!-- Transaction Details (shown when clicking history item) -->
+      <div class="action-card" id="transaction-details-card" style="display: none;">
+        <div class="card-header">
+          <div class="card-icon">📋</div>
+          <div class="card-title">
+            <h2>交易详情</h2>
+            <p>查看交易信息</p>
+          </div>
+        </div>
+        <div id="transaction-details-content">
+          <!-- Filled by JS -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Convert Modal -->
+  <div class="modal-overlay" id="convert-modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>
+          <svg class="modal-title-icon" width="24" height="24" viewBox="0 0 24 24">
+            <defs>
+              <linearGradient id="shieldGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#a855f7"/>
+                <stop offset="100%" style="stop-color:#6366f1"/>
+              </linearGradient>
+            </defs>
+            <path d="M12 2L4 6v6c0 5.5 3.5 10 8 11 4.5-1 8-5.5 8-11V6l-8-4z" fill="url(#shieldGrad2)"/>
+            <path d="M9 12l2 2 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          隐私存取
+        </h3>
+        <button class="modal-close" id="close-convert-modal">×</button>
+      </div>
+      
+      <div class="modal-body">
+        <!-- Balance Summary with Clickable Arrow -->
+        <div class="modal-balance-summary">
+          <div class="modal-balance-item from" id="modal-from-balance">
+            <span class="modal-balance-icon" id="modal-from-icon">💳</span>
+            <div class="modal-balance-info">
+              <span class="modal-balance-label" id="modal-from-label">公开余额</span>
+              <span class="modal-balance-value" id="modal-from-value">0.00</span>
+            </div>
+          </div>
+          
+          <button class="modal-swap-btn" id="modal-swap-direction" title="点击切换方向">
+            <span class="swap-arrow">⇄</span>
+          </button>
+          
+          <div class="modal-balance-item to" id="modal-to-balance">
+            <span class="modal-balance-icon" id="modal-to-icon">🔐</span>
+            <div class="modal-balance-info">
+              <span class="modal-balance-label" id="modal-to-label">隐私余额</span>
+              <span class="modal-balance-value" id="modal-to-value">0.00</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Amount Input -->
+        <div class="modal-form-group">
+          <label class="modal-label">转换金额</label>
+          <div class="modal-input-row">
+            <input type="text" class="modal-input" id="convert-amount" placeholder="0.0" value="10">
+            <span class="modal-input-suffix" id="modal-token-symbol">TOKEN</span>
+          </div>
+        </div>
+        
+        <!-- Quick Buttons -->
+        <div class="modal-quick-btns">
+          <button class="modal-quick-btn" data-percent="25">25%</button>
+          <button class="modal-quick-btn" data-percent="50">50%</button>
+          <button class="modal-quick-btn" data-percent="75">75%</button>
+          <button class="modal-quick-btn" data-percent="100">最大</button>
+        </div>
+        
+        <!-- Single Action Button -->
+        <button class="modal-single-action-btn deposit" id="convert-action-btn" disabled>
+          <span class="btn-text">存入隐私</span>
+          <span class="btn-arrow">→</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- External Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+  <script src="railgun-wallet-bundle.js"></script>
+  
+  <!-- Application Modules -->
+  <script type="module" src="js/config.js"></script>
+  <script type="module" src="js/utils.js"></script>
+  <script type="module" src="js/ui.js"></script>
+  <script type="module" src="js/wallet.js"></script>
+  <script type="module" src="js/transactions.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
