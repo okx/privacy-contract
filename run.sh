@@ -117,15 +117,15 @@ fi
 
 yarn install
 
-#1. start anvil (local ethereum node)
-# Kill any existing process on port 8545
-lsof -ti :8545 | xargs kill 2>/dev/null || true
-anvil > anvil.log 2>&1 &
-ANVIL_PID=$!
+#1. start hardhat node (local ethereum node)
+# Kill any existing process on port 8546
+lsof -ti :8546 | xargs kill 2>/dev/null || true
+npx hardhat node --port 8546 > hardhat-node.log 2>&1 &
+HARDHAT_PID=$!
 
 # Auto cleanup when script exits
 cleanup() {
-    kill $ANVIL_PID 2>/dev/null || true
+    kill $HARDHAT_PID 2>/dev/null || true
     if [ -n "$PROVER_SERVER_PID" ]; then
         kill $PROVER_SERVER_PID 2>/dev/null || true
     fi
