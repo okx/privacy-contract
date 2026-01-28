@@ -7,7 +7,7 @@
 # Example: ./build_circuit.sh 02x03
 #
 # Environment variables:
-#   USE_LOCAL_CIRCOM - Set to "true" to use ./bin/circom, otherwise uses system circom
+#   CIRCOM_BIN_PATH - Path to circom binary (required)
 #   LOCAL_CIRCUITS_PATH - Path to circuits-v2 directory (required)
 #
 
@@ -54,25 +54,19 @@ fi
 
 cd "$LOCAL_CIRCUITS_PATH"
 
-# Configure circom path based on USE_LOCAL_CIRCOM
-if [ "$USE_LOCAL_CIRCOM" = "true" ]; then
-    if [ -x "./bin/circom" ]; then
-        CIRCOM_BIN="./bin/circom"
-        log_info "Using local circom: $CIRCOM_BIN"
-    else
-        log_warn "./bin/circom not found, falling back to system circom"
-        CIRCOM_BIN="circom"
-    fi
-else
-    CIRCOM_BIN="circom"
-    log_info "Using system circom"
+# Check CIRCOM_BIN_PATH is set
+if [ -z "$CIRCOM_BIN_PATH" ]; then
+    log_error "CIRCOM_BIN_PATH is not set. Please set it in your .env file."
+    exit 1
 fi
 
 # Verify circom is available
-if ! command -v "$CIRCOM_BIN" &> /dev/null && [ ! -x "$CIRCOM_BIN" ]; then
-    log_error "circom not found. Install via 'cargo install circom' or set USE_LOCAL_CIRCOM=true"
+if ! command -v "$CIRCOM_BIN_PATH" &> /dev/null && [ ! -x "$CIRCOM_BIN_PATH" ]; then
+    log_error "circom not found at: $CIRCOM_BIN_PATH"
     exit 1
 fi
+
+log_info "Using circom: $CIRCOM_BIN_PATH"
 
 log_info "Building circuit: ${CIRCUIT_NAME} (${NULLIFIERS} nullifiers, ${COMMITMENTS} commitments)"
 
@@ -93,7 +87,7 @@ EOF
 
 # Step 2: Compile with circom
 log_info "Compiling circuit with circom..."
-"$CIRCOM_BIN" "src/generated/${CIRCUIT_NAME}.circom" --r1cs --wasm --sym -o build
+"$CIRCOM_BIN_PATH" "src/generated/${CIRCUIT_NAME}.circom" --r1cs --wasm --sym -o build
 
 # Show circuit info
 log_info "Circuit constraint info:"

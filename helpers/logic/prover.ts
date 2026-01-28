@@ -10,7 +10,7 @@ import * as path from 'path';
 const USE_RAPIDSNARK = process.env.USE_RAPIDSNARK === 'true';
 const RAPIDSNARK_MODE = process.env.RAPIDSNARK_MODE || 'local'; // 'local' or 'server'
 const DEBUG_TIMING = process.env.DEBUG_TIMING === 'true';
-const RAPIDSNARK_PATH = process.env.RAPIDSNARK_PATH || '/usr/local/bin/rapidsnark';
+const RAPIDSNARK_BIN_PATH = process.env.RAPIDSNARK_BIN_PATH || '/usr/local/bin/rapidsnark';
 const RAPIDSNARK_SERVER_URL = process.env.RAPIDSNARK_SERVER_URL || 'http://localhost:8080';
 const RAPIDSNARK_CIRCUIT = process.env.RAPIDSNARK_CIRCUIT || '02x03';
 
@@ -166,7 +166,7 @@ async function proveWithRapidsnark(
 
     // Step 2: Generate proof using rapidsnark (C++)
     const proverStart = Date.now();
-    execSync(`"${RAPIDSNARK_PATH}" "${zkeyPath}" "${witnessPath}" "${proofPath}" "${publicPath}"`, {
+    execSync(`"${RAPIDSNARK_BIN_PATH}" "${zkeyPath}" "${witnessPath}" "${proofPath}" "${publicPath}"`, {
       stdio: 'pipe',
     });
     const proverTime = Date.now() - proverStart;

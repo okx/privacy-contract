@@ -89,8 +89,8 @@ setup_rapidsnark_server() {
 setup_rapidsnark_local() {
     echo "Rapidsnark mode: local (standalone)"
 
-    # Use RAPIDSNARK_PATH from env, default to /usr/local/bin/rapidsnark
-    local rapidsnark_bin="${RAPIDSNARK_PATH:-/usr/local/bin/rapidsnark}"
+    # Use RAPIDSNARK_BIN_PATH from env, default to /usr/local/bin/rapidsnark
+    local rapidsnark_bin="${RAPIDSNARK_BIN_PATH:-/usr/local/bin/rapidsnark}"
 
     if [ ! -x "$rapidsnark_bin" ]; then
         echo "rapidsnark not found at $rapidsnark_bin, installing..."
