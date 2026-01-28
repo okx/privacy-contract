@@ -26,6 +26,12 @@ if [ -f .env ]; then
     echo "📄 Loading environment variables from .env..."
     export $(grep -v '^#' .env | xargs)
     echo ""
+else
+    echo "📝 .env file not found, creating with LOCAL=true..."
+    echo "LOCAL=true" > .env
+    export LOCAL=true
+    echo "✅ Created .env with LOCAL=true"
+    echo ""
 fi
 
 # Determine mode
