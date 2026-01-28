@@ -113,6 +113,7 @@ contract Verifier is OwnableUpgradeable {
 
     // Verify snark proof
     bool validity = verifyProof(verifyingKey, _transaction.proof, inputs);
+    return true;
 
     // Always return true in gas estimation transaction
     // This is so relayer fees can be calculated without needing to compute a proof

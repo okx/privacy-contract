@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Wallet Demo</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">🛡️</div>
+      <span>Privacy Wallet</span>
+    </div>
+    <button class="connect-btn" id="connect-btn">
+      Connect Wallet
+    </button>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <!-- Balance Card -->
+      <div class="balance-card">
+        <div class="balance-header">
+          <span class="balance-title">💰 Balances</span>
+        </div>
+        
+        <!-- ERC20 Token Info -->
+        <div id="erc20-token-info" style="padding: 12px; background: var(--bg-dark); border-radius: 8px; margin-bottom: 16px; font-size: 11px; color: var(--text-muted);">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span>Token: Loading...</span>
+          </div>
+        </div>
+        
+        <div class="balance-row">
+          <div class="balance-label">
+            <div class="balance-icon public">📤</div>
+            <div class="balance-info">
+              <h4>Public Balance</h4>
+            </div>
+          </div>
+          <span class="balance-value public">0.00 TOKEN</span>
+        </div>
+        
+        <div class="balance-row">
+          <div class="balance-label">
+            <div class="balance-icon private">🔐</div>
+            <div class="balance-info">
+              <h4>Private Balance</h4>
+            </div>
+          </div>
+          <span class="balance-value private">0.00 TOKEN</span>
+        </div>
+      </div>
+
+      <!-- Account Card -->
+      <div class="account-card">
+        <div class="account-header">
+          <div class="account-avatar"></div>
+          <div class="account-info">
+            <h3>My Account</h3>
+            <p>Not connected</p>
+          </div>
+        </div>
+        
+        <div class="mpk-section">
+          <div class="mpk-label">Master Public Key (MPK)</div>
+          <div class="mpk-value">
+            Connect wallet to generate MPK
+          </div>
+          <div class="mpk-status">
+            <div class="status-dot unregistered"></div>
+            <span class="status-text">Not connected</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Card -->
+      <div class="history-card">
+        <div class="history-header">
+          <h3>Recent Activity</h3>
+        </div>
+        <div class="history-list">
+          <div style="text-align: center; padding: 20px; color: var(--text-muted);">
+            <p>No transactions yet</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="content">
+      <!-- Tab Navigation -->
+      <div class="tabs">
+        <button class="tab active shield">
+          🛡️ Shield
+        </button>
+        <button class="tab">
+          📤 Unshield
+        </button>
+        <button class="tab">
+          🔄 Private Transfer
+        </button>
+        <button class="tab">
+          📋 Transactions
+        </button>
+      </div>
+
+      <!-- Action Panel -->
+      <div class="action-panel">
+        <!-- Shield Panel -->
+        <div class="panel-content active" id="shield-panel">
+          <div class="panel-header">
+            <div class="panel-icon shield">🛡️</div>
+            <div class="panel-title">
+              <h2>Shield Assets</h2>
+              <p>Convert public tokens to private balance</p>
+            </div>
+          </div>
+
+          <div class="flow-indicator">
+            <div class="flow-step">
+              <div class="flow-icon wallet">💳</div>
+              <span class="flow-label">Public</span>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <div class="flow-icon shield-icon">🛡️</div>
+              <span class="flow-label">Shield</span>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <div class="flow-icon private">🔐</div>
+              <span class="flow-label">Private</span>
+            </div>
+          </div>
+
+          <!-- MPK Lookup Result (show current user's MPK status) -->
+          <div class="form-group">
+            <div class="recipient-lookup" id="shield-lookup">
+              <div class="lookup-header">
+                <span class="lookup-icon">🔍</span>
+                <span class="lookup-title">Your MPK Status</span>
+              </div>
+              <div class="lookup-result">
+                <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 11px; color: var(--text-muted);">MPK:</span>
+                    <span class="lookup-mpk" id="shield-mpk">Connect wallet...</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 11px; color: var(--text-muted);">ViewPubKey:</span>
+                    <span class="lookup-mpk" id="shield-viewpubkey" style="max-width: 200px;">—</span>
+                  </div>
+                  <div style="display: flex; justify-content: flex-end;">
+                    <span class="lookup-status" id="shield-status">—</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-label">
+              <span>Amount</span>
+              <button class="max-btn">MAX</button>
+            </div>
+            <div class="input-wrapper">
+              <input type="text" class="form-input" placeholder="0.0" value="10">
+              <span class="input-suffix">TOKEN</span>
+            </div>
+          </div>
+
+          <button class="submit-btn shield">
+            🛡️ Shield to Private Balance
+          </button>
+        </div>
+
+        <!-- Unshield Panel -->
+        <div class="panel-content" id="unshield-panel">
+          <div class="panel-header">
+            <div class="panel-icon unshield">📤</div>
+            <div class="panel-title">
+              <h2>Unshield Assets</h2>
+              <p>Convert private balance back to public</p>
+            </div>
+          </div>
+
+          <div class="flow-indicator">
+            <div class="flow-step">
+              <div class="flow-icon private">🔐</div>
+              <span class="flow-label">Private</span>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <div class="flow-icon" style="background: var(--accent-orange-dim); color: var(--accent-orange);">📤</div>
+              <span class="flow-label">Unshield</span>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <div class="flow-icon wallet">💳</div>
+              <span class="flow-label">Public</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-label">
+              <span>Amount</span>
+              <button class="max-btn">MAX</button>
+            </div>
+            <div class="input-wrapper">
+              <input type="text" class="form-input" placeholder="0.0">
+              <span class="input-suffix">TOKEN</span>
+            </div>
+          </div>
+
+          <button class="submit-btn unshield">
+            📤 Unshield to Public Address
+          </button>
+        </div>
+
+        <!-- Transfer Panel -->
+        <div class="panel-content" id="transfer-panel">
+          <div class="panel-header">
+            <div class="panel-icon transfer">🔄</div>
+            <div class="panel-title">
+              <h2>Private Transfer</h2>
+              <p>Send privately to another user</p>
+            </div>
+          </div>
+
+          <div class="flow-indicator">
+            <div class="flow-step">
+              <div class="flow-icon private">🔐</div>
+              <span class="flow-label">Your Private</span>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <div class="flow-icon" style="background: var(--accent-purple-dim); color: var(--accent-purple);">🔄</div>
+              <span class="flow-label">ZK Transfer</span>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <div class="flow-icon private">🔐</div>
+              <span class="flow-label">Their Private</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-label">
+              <span>Recipient EOA Address</span>
+              <span class="hint">Auto-lookup MPK from contract</span>
+            </div>
+            <div class="input-wrapper">
+              <input type="text" class="form-input" placeholder="0x...">
+            </div>
+            <div class="recipient-lookup" id="transfer-lookup">
+              <div class="lookup-header">
+                <span class="lookup-icon">🔍</span>
+                <span class="lookup-title">MPK Lookup Result</span>
+              </div>
+              <div class="lookup-result">
+                <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 11px; color: var(--text-muted);">MPK:</span>
+                    <span class="lookup-mpk" id="transfer-mpk">Waiting for address...</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 11px; color: var(--text-muted);">ViewPubKey:</span>
+                    <span class="lookup-mpk" id="transfer-viewpubkey" style="max-width: 200px;">—</span>
+                  </div>
+                  <div style="display: flex; justify-content: flex-end;">
+                    <span class="lookup-status" id="transfer-status">—</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-label">
+              <span>Amount</span>
+              <button class="max-btn">MAX</button>
+            </div>
+            <div class="input-wrapper">
+              <input type="text" class="form-input" placeholder="0.0">
+              <span class="input-suffix">TOKEN</span>
+            </div>
+          </div>
+
+          <button class="submit-btn transfer">
+            🔄 Send Private Transfer
+          </button>
+        </div>
+
+        <!-- Transactions Panel -->
+        <div class="panel-content" id="transactions-panel">
+          <div class="panel-header">
+            <div class="panel-icon">📋</div>
+            <div class="panel-title">
+              <h2>Transaction History</h2>
+              <p>View all your transactions</p>
+            </div>
+          </div>
+
+          <div class="transaction-details" id="transaction-details-container">
+            <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+              <p>Select a transaction to view details</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- External Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+  <script src="railgun-wallet-bundle.js"></script>
+  
+  <!-- Application Modules (ES6 Modules) -->
+  <script type="module" src="js/config.js"></script>
+  <script type="module" src="js/utils.js"></script>
+  <script type="module" src="js/ui.js"></script>
+  <script type="module" src="js/wallet.js"></script>
+  <script type="module" src="js/transactions.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -302,6 +302,17 @@ async function proveWithRapidsnarkServer(inputs: unknown, circuit: string = RAPI
 }
 
 /**
+ * Generate proof using rapidsnark server for a specific circuit name
+ *
+ * @param inputs - circuit inputs
+ * @param circuit - circuit name (e.g., "02x03")
+ * @returns proof
+ */
+async function proveWithRapidsnarkServerForCircuit(inputs: unknown, circuit: string): Promise<ProofBundle> {
+  return proveWithRapidsnarkServer(inputs, circuit);
+}
+
+/**
  * Generate proof for a circuit
  * Uses rapidsnark based on RAPIDSNARK_MODE:
  *   - 'server': HTTP calls to rapidsnark prover server
@@ -330,4 +341,4 @@ async function prove(
   return proveWithSnarkjs(artifact, inputs);
 }
 
-export { formatProof, prove };
+export { formatProof, prove, proveWithRapidsnarkServerForCircuit };

@@ -35,3 +35,12 @@ deployments.json
 .env
 tmp/
 temp_*.json
+demo-ui/deployments.json
+.env
+
+# Generated/Built Files
+demo-ui/railgun-wallet-bundle.js
+demo-ui/railgun-wallet-bundle.js.map
+
+# DevTools
+demo-ui/.well-known/

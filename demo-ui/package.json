@@ -1,0 +1,17 @@
+{
+  "name": "railgun-demo-ui",
+  "version": "1.0.0",
+  "description": "Railgun Privacy Wallet Demo Interface",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "railgun",
+    "privacy",
+    "wallet",
+    "demo"
+  ],
+  "author": "",
+  "license": "MIT"
+}

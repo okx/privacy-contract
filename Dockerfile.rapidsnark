@@ -1,10 +1,15 @@
-FROM ubuntu:22.04
+FROM ubuntu:22.04 AS base
 
 ARG RAPIDSNARK_REPO=https://github.com/okx/rapidsnark.git
 ARG RAPIDSNARK_BRANCH=cliff/dev/railgun_circuit
+ARG RAPIDSNARK_CIRCUIT=01x02
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Use Aliyun mirror for faster downloads
+RUN sed -i 's|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list
+
+# Base deps + Rust + Node in a stable layer for caching
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -15,9 +20,17 @@ RUN apt-get update \
         libevent-dev \
         libgmp-dev \
         libsodium-dev \
+        m4 \
         nasm \
         pkg-config \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+FROM base AS builder
 
 WORKDIR /opt/rapidsnark
 
@@ -25,10 +38,58 @@ RUN git clone -b ${RAPIDSNARK_BRANCH} ${RAPIDSNARK_REPO} . \
     && git submodule update --init
 
 RUN ./build_pistache.sh \
-    && make prover-server \
+    && if [ "$(uname -m)" = "aarch64" ]; then \
+         ./build_gmp.sh aarch64 && \
+         mkdir -p build_prover_server && cd build_prover_server && \
+         cmake .. -DTARGET_PLATFORM=aarch64 -DBUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release \
+           -DCMAKE_INSTALL_PREFIX=../package -DUSE_OPENMP=ON -DUSE_ASM=NO -DUSE_LOGGER=ON && \
+         make -j$(nproc) && make install && cd ..; \
+       else \
+         ./build_gmp.sh host && \
+         make prover-server; \
+       fi \
     && cp package/bin/proverServer /usr/local/bin/proverServer
 
-ENV RAPIDSNARK_CIRCUIT=02x03
+# Build witness generator for selected circuit (needed by prover server)
+RUN git clone --depth 1 https://github.com/iden3/circom.git /opt/circom \
+    && cd /opt/circom \
+    && cargo build --release \
+    && cp target/release/circom /usr/local/bin/circom \
+    && chmod +x /usr/local/bin/circom \
+    && git clone --depth 1 https://github.com/Railgun-Privacy/circuits-v2.git /opt/circuits-v2 \
+    && cd /opt/circuits-v2 \
+    && npm install \
+    && node /opt/circuits-v2/scripts/generate_circuits \
+    && CIRCUIT_FILE="/opt/circuits-v2/src/generated/${RAPIDSNARK_CIRCUIT}.circom" \
+    && [ -f "$CIRCUIT_FILE" ] \
+    && /usr/local/bin/circom --r1cs --sym --wasm --c "$CIRCUIT_FILE" --output /opt/rapidsnark/build \
+    && cd "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}_cpp" \
+    && sed -i 's|CFLAGS=-std=c++11 -O3 -I.|CFLAGS=-std=c++11 -O3 -I. -I../../depends/json/single_include|' Makefile \
+    && if [ "$(uname -m)" = "aarch64" ]; then \
+         echo "ARM64: skipping C++ witness generator, using WASM"; \
+       else \
+         make && cp "${RAPIDSNARK_CIRCUIT}" "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}"; \
+       fi
+
+# For ARM64: create witness generator wrapper using WASM
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+      echo '#!/bin/bash' > /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT} && \
+      echo 'node /opt/rapidsnark/build/'${RAPIDSNARK_CIRCUIT}'_js/generate_witness.js /opt/rapidsnark/build/'${RAPIDSNARK_CIRCUIT}'_js/'${RAPIDSNARK_CIRCUIT}'.wasm "$1" "$2"' >> /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT} && \
+      chmod +x /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}; \
+    fi
+
+FROM base AS runtime
+
+WORKDIR /opt/rapidsnark
+
+COPY --from=builder /opt/rapidsnark /opt/rapidsnark
+COPY --from=builder /usr/local/bin/proverServer /usr/local/bin/proverServer
+COPY --from=builder /opt/rapidsnark/depends/pistache/build/src/libpistache* /usr/local/lib/
+COPY --from=builder /opt/rapidsnark/package/lib/librapidsnark.so /usr/local/lib/
+
+RUN ldconfig
+
+ENV RAPIDSNARK_CIRCUIT=${RAPIDSNARK_CIRCUIT}
 
 EXPOSE 8080
 VOLUME ["/data/zkeys"]
