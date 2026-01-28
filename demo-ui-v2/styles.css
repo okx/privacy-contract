@@ -146,6 +146,89 @@ body {
 }
 
 /* Privacy Toggle */
+.privacy-enable-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.privacy-enable-btn {
+  width: 100%;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, var(--accent-purple), #8b5cf6);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+  font-family: 'Noto Sans SC', sans-serif;
+}
+
+.privacy-enable-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(168, 85, 247, 0.3);
+}
+
+.privacy-enable-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.privacy-enable-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.privacy-enable-btn.enabled {
+  background: linear-gradient(135deg, var(--accent-green), #00b894);
+  cursor: default;
+}
+
+.privacy-enable-btn .btn-icon {
+  font-size: 16px;
+}
+
+.privacy-enable-btn .btn-text {
+  font-size: 14px;
+}
+
+.privacy-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.privacy-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.privacy-status.enabled .status-dot {
+  background: var(--success);
+}
+
+.privacy-status.disabled .status-dot {
+  background: var(--danger);
+}
+
+.privacy-status .status-text {
+  color: var(--text-secondary);
+}
+
 .privacy-toggle-section {
   background: var(--bg-dark);
   border-radius: 12px;
@@ -805,6 +888,16 @@ body {
   box-shadow: 0 8px 24px rgba(249, 115, 22, 0.4);
 }
 
+.modal-single-action-btn.approve {
+  background: linear-gradient(135deg, var(--accent-blue), #2563eb);
+  color: white;
+}
+
+.modal-single-action-btn.approve:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+}
+
 .modal-single-action-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -936,16 +1029,8 @@ body {
   color: var(--accent-green);
 }
 
-.recipient-status.found::before {
-  content: "✓ ";
-}
-
 .recipient-status.not-found {
   color: var(--accent-red);
-}
-
-.recipient-status.not-found::before {
-  content: "✗ ";
 }
 
 .static-balance {
@@ -1635,6 +1720,40 @@ body {
 .submit-btn.transfer-private {
   background: linear-gradient(135deg, var(--accent-purple), #9333ea);
   color: white;
+}
+
+.submit-btn.transfer-private-to-public {
+  background: linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 100%);
+}
+
+/* Privacy Account Option */
+.privacy-account-option {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.privacy-account-checkbox {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  gap: 8px;
+}
+
+.privacy-account-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--accent-purple);
+}
+
+.privacy-account-checkbox .checkbox-label {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 .submit-btn:hover:not(:disabled) {

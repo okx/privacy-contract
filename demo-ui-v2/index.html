@@ -39,19 +39,13 @@
           </div>
         </div>
         
-        <!-- Privacy Toggle -->
-        <div class="privacy-toggle-section">
-          <div class="toggle-row">
-            <div class="toggle-label">
-              <span class="toggle-icon">🔒</span>
-              <span>隐私交易</span>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="privacy-toggle" disabled>
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-status" id="privacy-status">
+        <!-- Privacy Enable Button -->
+        <div class="privacy-enable-section">
+          <button class="privacy-enable-btn" id="privacy-enable-btn" disabled>
+            <span class="btn-icon">🔒</span>
+            <span class="btn-text">开通隐私功能</span>
+          </button>
+          <div class="privacy-status" id="privacy-status">
             <span class="status-dot"></span>
             <span class="status-text">请先连接钱包</span>
           </div>
@@ -125,7 +119,7 @@
           <div class="card-icon transfer">💸</div>
           <div class="card-title">
             <h2>转账</h2>
-            <p>向其他地址发送代币</p>
+            <p>向其他地址发送资产</p>
           </div>
         </div>
 
@@ -161,6 +155,13 @@
           </div>
           <div class="input-wrapper">
             <input type="text" class="form-input" id="transfer-address" placeholder="0x...">
+          </div>
+          <!-- Option to send to privacy account (only shown when recipient has privacy enabled) -->
+          <div class="privacy-account-option" id="privacy-account-option" style="display: none;">
+            <label class="privacy-account-checkbox">
+              <input type="checkbox" id="send-to-privacy-checkbox">
+              <span class="checkbox-label">发送到对方的隐私账户</span>
+            </label>
           </div>
         </div>
 

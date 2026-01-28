@@ -133,9 +133,9 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   await (
     await railgun.initializeRailgunLogic(
       treasuryProxy.address,
-      25n,
-      25n,
-      25n,
+      0n,
+      0n,
+      0n,
       deployer.address,
       { gasLimit: 2000000 },
     )

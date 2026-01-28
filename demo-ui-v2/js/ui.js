@@ -6,7 +6,7 @@ import { erc20TokenInfo, CONFIG } from './config.js';
 const dom = {
   connectBtn: () => document.getElementById('connect-btn'),
   accountAddress: () => document.getElementById('account-address'),
-  privacyToggle: () => document.getElementById('privacy-toggle'),
+  privacyEnableBtn: () => document.getElementById('privacy-enable-btn'),
   privacyStatus: () => document.getElementById('privacy-status'),
   tokenInfo: () => document.getElementById('token-info'),
   tokenSymbolBadge: () => document.getElementById('token-symbol-badge'),
@@ -60,13 +60,24 @@ export function updateAccountInfo(state) {
     addressEl.textContent = state.account || '未连接';
   }
   
-  // Update privacy toggle
-  const toggle = dom.privacyToggle();
+  // Update privacy enable button
+  const enableBtn = document.getElementById('privacy-enable-btn');
   const statusEl = dom.privacyStatus();
   
-  if (toggle) {
-    toggle.disabled = !state.account;
-    toggle.checked = state.isPrivacyEnabled;
+  if (enableBtn) {
+    if (!state.account) {
+      enableBtn.disabled = true;
+      enableBtn.innerHTML = '<span class="btn-icon">🔒</span><span class="btn-text">开通隐私功能</span>';
+      enableBtn.classList.remove('enabled');
+    } else if (state.isPrivacyEnabled) {
+      enableBtn.disabled = true;
+      enableBtn.innerHTML = '<span class="btn-icon">✓</span><span class="btn-text">已开通隐私功能</span>';
+      enableBtn.classList.add('enabled');
+    } else {
+      enableBtn.disabled = false;
+      enableBtn.innerHTML = '<span class="btn-icon">🔒</span><span class="btn-text">开通隐私功能</span>';
+      enableBtn.classList.remove('enabled');
+    }
   }
   
   if (statusEl) {
@@ -77,10 +88,10 @@ export function updateAccountInfo(state) {
       statusText.textContent = '请先连接钱包';
     } else if (state.isPrivacyEnabled) {
       statusEl.classList.add('enabled');
-      statusText.textContent = '✓ 已启用隐私保护';
+      statusText.textContent = '✓ 已开通隐私功能';
     } else {
       statusEl.classList.add('disabled');
-      statusText.textContent = '未启用（点击开关启用）';
+      statusText.textContent = '点击按钮开通隐私功能';
     }
   }
 }
@@ -195,7 +206,7 @@ export function updateModalBalances(state, direction = 'deposit') {
 }
 
 // Update convert action button
-export function updateConvertActionButton(direction, state) {
+export async function updateConvertActionButton(direction, state) {
   const btn = document.getElementById('convert-action-btn');
   if (!btn) {
     console.warn('convert-action-btn not found');
@@ -204,14 +215,37 @@ export function updateConvertActionButton(direction, state) {
   
   if (direction === 'deposit') {
     // Deposit to private (Public → Private)
+    // Check allowance first
+    const convertAmountInput = document.getElementById('convert-amount');
+    const amountValue = convertAmountInput?.value?.trim() || '';
+    
+    if (amountValue && parseFloat(amountValue) > 0) {
+      // Check allowance for the entered amount
+      const { checkTokenAllowance } = await import('./wallet.js');
+      const allowanceInfo = await checkTokenAllowance(amountValue);
+      
+      if (!allowanceInfo.hasAllowance) {
+        // Show approve button
+        btn.className = 'modal-single-action-btn approve';
+        btn.innerHTML = '<span class="btn-text">授权代币</span><span class="btn-arrow">→</span>';
+        btn.disabled = !state.account || !state.isPrivacyEnabled;
+        btn.dataset.action = 'approve';
+        btn.dataset.amount = amountValue;
+        return;
+      }
+    }
+    
+    // Show deposit button
     btn.className = 'modal-single-action-btn deposit';
     btn.innerHTML = '<span class="btn-text">存入隐私</span><span class="btn-arrow">→</span>';
     btn.disabled = !state.account || !state.isPrivacyEnabled || parseFloat(state.publicBalance) <= 0;
+    btn.dataset.action = 'deposit';
   } else {
     // Withdraw to public (Private → Public)
     btn.className = 'modal-single-action-btn withdraw';
     btn.innerHTML = '<span class="btn-text">提取公开</span><span class="btn-arrow">←</span>';
     btn.disabled = !state.account || !state.isPrivacyEnabled || parseFloat(state.privateBalance) <= 0;
+    btn.dataset.action = 'withdraw';
   }
 }
 
@@ -372,6 +406,12 @@ export function updateTransferRecipientStatus(status, message) {
   }
 }
 
+// Get whether to send to privacy account
+export function getSendToPrivacyAccount() {
+  const checkbox = document.getElementById('send-to-privacy-checkbox');
+  return checkbox?.checked || false;
+}
+
 // Set Button Loading State
 export function setButtonLoading(selector, isLoading, loadingText = '处理中...') {
   const btn = document.querySelector(selector);
@@ -390,13 +430,10 @@ export function setButtonLoading(selector, isLoading, loadingText = '处理中..
   }
 }
 
-// Select Transfer Type
-export function selectTransferType(type, state) {
-  currentTransferType = type;
+// Select Balance Type (public or private assets to use)
+export function selectBalanceType(type, state) {
+  currentTransferType = type; // Keep using this variable for now, but it now represents balance type
   
-  const transferBtn = dom.transferBtn();
-  const hintEl = dom.transferHint();
-  const statusEl = dom.transferRecipientStatus();
   const toggleInput = document.getElementById('balance-toggle-input');
   
   // Update toggle switch state
@@ -407,36 +444,117 @@ export function selectTransferType(type, state) {
   // Update balance display
   updateToggleBalance(state);
   
-  // Update transfer button
-  if (transferBtn) {
-    if (type === 'public') {
-      transferBtn.textContent = '💳 发送公开转账';
-      transferBtn.className = 'submit-btn transfer-public';
+  // Update button state and text will be handled by updateTransferMode
+  updateTransferButtonState(state);
+}
+
+// Update transfer mode based on balance type and recipient registration status
+export function updateTransferMode(balanceType, recipientRegistered, state) {
+  const transferBtn = dom.transferBtn();
+  const hintEl = dom.transferHint();
+  const statusEl = dom.transferRecipientStatus();
+  const privacyOption = document.getElementById('privacy-account-option');
+  const privacyCheckbox = document.getElementById('send-to-privacy-checkbox');
+  
+  if (!transferBtn) return;
+  
+  // Show/hide privacy account option based on recipient registration status
+  if (privacyOption) {
+    if (recipientRegistered === true) {
+      privacyOption.style.display = 'block';
+      // Reset checkbox state when showing
+      if (privacyCheckbox && !privacyCheckbox.hasAttribute('data-initialized')) {
+        privacyCheckbox.checked = false;
+        privacyCheckbox.setAttribute('data-initialized', 'true');
+      }
     } else {
-      transferBtn.textContent = '🔐 发送隐私转账';
-      transferBtn.className = 'submit-btn transfer-private';
+      privacyOption.style.display = 'none';
+      if (privacyCheckbox) {
+        privacyCheckbox.checked = false;
+      }
     }
   }
   
-  // Reset status display when switching to public
-  if (type === 'public') {
-    if (statusEl) {
-      statusEl.style.display = 'none';
-      statusEl.className = 'recipient-status';
+  // Get whether user wants to send to privacy account
+  const sendToPrivacy = privacyCheckbox?.checked || false;
+  
+  // Determine transfer mode
+  let mode = null;
+  let buttonText = '';
+  let buttonClass = '';
+  let hintText = '';
+  
+  if (balanceType === 'public') {
+    if (recipientRegistered && sendToPrivacy) {
+      // 公开到隐私
+      mode = 'public-to-private';
+      buttonText = '🔐 发送到隐私账户';
+      buttonClass = 'submit-btn transfer-public-to-private';
+      hintText = '将发送到对方的隐私账户';
+    } else {
+      // 公开到公开
+      mode = 'public-to-public';
+      buttonText = '💳 发送公开转账';
+      buttonClass = 'submit-btn transfer-public';
+      hintText = '将发送到对方的公开账户';
     }
-    if (hintEl) {
-      hintEl.style.display = 'inline';
-      hintEl.textContent = '输入对方钱包地址';
+  } else {
+    if (recipientRegistered && sendToPrivacy) {
+      // 隐私到隐私
+      mode = 'private-to-private';
+      buttonText = '🔐 发送隐私转账';
+      buttonClass = 'submit-btn transfer-private';
+      hintText = '将发送到对方的隐私账户';
+    } else {
+      // 隐私到公开
+      mode = 'private-to-public';
+      buttonText = '💳 发送到公开账户';
+      buttonClass = 'submit-btn transfer-private-to-public';
+      hintText = '将发送到对方的公开账户';
     }
   }
   
-  // Update hint (show requirement for private transfer)
-  if (hintEl && type === 'private') {
-    hintEl.textContent = '对方需已启用隐私交易';
+  // Update button
+  transferBtn.textContent = buttonText;
+  transferBtn.className = buttonClass;
+  transferBtn.dataset.mode = mode;
+  
+  // Update hint
+  if (hintEl) {
+    hintEl.textContent = hintText;
+  }
+  
+  // Update status display
+  if (statusEl && recipientRegistered !== null) {
+    if (recipientRegistered) {
+      statusEl.className = 'recipient-status found';
+      statusEl.textContent = '对方已启用隐私交易';
+      statusEl.style.display = 'inline';
+      if (hintEl) hintEl.style.display = 'none';
+    } else {
+      statusEl.className = 'recipient-status not-found';
+      statusEl.textContent = '对方未启用隐私交易';
+      statusEl.style.display = 'inline';
+      if (hintEl) hintEl.style.display = 'none';
+    }
+  } else if (statusEl) {
+    statusEl.style.display = 'none';
+    if (hintEl) hintEl.style.display = 'inline';
   }
   
   // Update button state
   updateTransferButtonState(state);
+}
+
+// Get current transfer mode
+export function getTransferMode() {
+  const transferBtn = dom.transferBtn();
+  return transferBtn?.dataset.mode || null;
+}
+
+// Legacy function for backward compatibility
+export function selectTransferType(type, state) {
+  selectBalanceType(type, state);
 }
 
 // Update Transfer Button State
@@ -459,8 +577,13 @@ function updateTransferButtonState(state) {
   transferBtn.disabled = false;
 }
 
-// Get Current Transfer Type
+// Get Current Transfer Type (balance type)
 export function getTransferType() {
+  return currentTransferType;
+}
+
+// Get Current Balance Type (alias for getTransferType)
+export function getBalanceType() {
   return currentTransferType;
 }
 
