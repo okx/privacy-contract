@@ -78,6 +78,15 @@ RUN if [ "$(uname -m)" = "aarch64" ]; then \
       chmod +x /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}; \
     fi
 
+# Generate zkey inside container (no host mount needed)
+RUN npm install -g snarkjs \
+    && mkdir -p /opt/rapidsnark/zkeys \
+    && cd /opt/rapidsnark \
+    && curl -L -o ptau.ptau "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_18.ptau" \
+    && snarkjs groth16 setup /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}.r1cs ptau.ptau /opt/rapidsnark/zkeys/${RAPIDSNARK_CIRCUIT}.zkey \
+    && snarkjs zkey export verificationkey /opt/rapidsnark/zkeys/${RAPIDSNARK_CIRCUIT}.zkey /opt/rapidsnark/zkeys/${RAPIDSNARK_CIRCUIT}.vkey.json \
+    && rm ptau.ptau
+
 FROM base AS runtime
 
 WORKDIR /opt/rapidsnark
@@ -92,6 +101,6 @@ RUN ldconfig
 ENV RAPIDSNARK_CIRCUIT=${RAPIDSNARK_CIRCUIT}
 
 EXPOSE 8080
-VOLUME ["/data/zkeys"]
 
-CMD ["/bin/bash", "-lc", "/usr/local/bin/proverServer 8080 /data/zkeys/${RAPIDSNARK_CIRCUIT}.zkey"]
+# Use internal zkeys (built inside container)
+CMD ["/bin/bash", "-lc", "/usr/local/bin/proverServer 8080 /opt/rapidsnark/zkeys/${RAPIDSNARK_CIRCUIT}.zkey"]

@@ -123,24 +123,7 @@ setup_rapidsnark_docker() {
     local container_name="${RAPIDSNARK_DOCKER_CONTAINER:-rapidsnark-prover}"
     local circuit="${RAPIDSNARK_CIRCUIT:-02x03}"
 
-    local zkey_dir=""
-    if [ -n "$RAPIDSNARK_DOCKER_ZKEY_DIR" ] && [ -d "$RAPIDSNARK_DOCKER_ZKEY_DIR" ]; then
-        zkey_dir="$RAPIDSNARK_DOCKER_ZKEY_DIR"
-    elif [ -n "$LOCAL_CIRCUITS_PATH" ] && [ -d "${LOCAL_CIRCUITS_PATH}/zkeys" ]; then
-        zkey_dir="${LOCAL_CIRCUITS_PATH}/zkeys"
-    elif [ -n "$RAPIDSNARK_DIR" ] && [ -d "${RAPIDSNARK_DIR}/zkeys" ]; then
-        zkey_dir="${RAPIDSNARK_DIR}/zkeys"
-    fi
-
-    if [ -z "$zkey_dir" ]; then
-        echo "zkey directory not found. Set RAPIDSNARK_DOCKER_ZKEY_DIR or LOCAL_CIRCUITS_PATH."
-        exit 1
-    fi
-
-    if [ ! -f "${zkey_dir}/${circuit}.zkey" ]; then
-        echo "zkey not found at ${zkey_dir}/${circuit}.zkey"
-        exit 1
-    fi
+    # zkeys are now built inside the Docker image - no host mount needed
 
     if ! docker image inspect "$image_name" > /dev/null 2>&1 || [ "$RAPIDSNARK_DOCKER_BUILD" = "true" ]; then
         echo "Building docker image ${image_name}..."
@@ -163,7 +146,6 @@ setup_rapidsnark_docker() {
         --name "${container_name}" \
         -p "${server_port}:8080" \
         -e "RAPIDSNARK_CIRCUIT=${circuit}" \
-        -v "${zkey_dir}:/data/zkeys:ro" \
         "${image_name}" > /dev/null
     PROVER_SERVER_CONTAINER="${container_name}"
 
