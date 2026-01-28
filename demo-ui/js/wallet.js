@@ -156,11 +156,17 @@ export async function connectWallet() {
 
     const ethersLib = ensureEthers();
     state.provider = new ethersLib.providers.Web3Provider(provider);
+    state.provider.pollingInterval = 200;  // Fast polling: 200ms for local dev
     state.signer = state.provider.getSigner();
     state.account = accounts[0];
     
     await switchToTargetChain(provider);
-    state.chainId = (await state.provider.getNetwork()).chainId;
+    const network = await state.provider.getNetwork();
+    state.chainId = network.chainId;
+    
+    // Force fast polling for local development (after network is detected)
+    state.provider.pollingInterval = 200;
+    console.log('Provider polling interval set to:', state.provider.pollingInterval, 'ms');
 
     await loadERC20TokenInfo();
     
@@ -418,7 +424,9 @@ export async function registerMPK() {
     
     const tx = await registry.register(state.mpk, viewingPublicKeyBytes32);
     
-    await tx.wait();
+    // Use fast polling for registration confirmation
+    const { waitForTransactionFast } = await import('./utils.js');
+    await waitForTransactionFast(state.provider, tx.hash);
     
     if (state.railgunWallet) {
       await state.railgunWallet.registerAccount(state.account);
@@ -432,7 +440,7 @@ export async function registerMPK() {
     try {
       const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.signer);
       const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
-      await approveTx.wait();
+      await waitForTransactionFast(state.provider, approveTx.hash);
       console.log('✅ Token approved. You can now Shield without additional approvals.');
       
       // Enable privacy mode after successful registration and approval
@@ -519,7 +527,8 @@ export function addTransaction(type, title, description, amount, txHash = null, 
   const icons = {
     shield: '🛡️',
     unshield: '📤',
-    transfer: '🔄'
+    transfer: '🔄',
+    'transfer-out': '💸'
   };
 
   state.transactions.unshift({
@@ -620,7 +629,7 @@ function retriggerTransferLookup() {
   // Check if currently on transfer tab
   const transferPanel = document.getElementById('transfer-panel');
   if (transferPanel && transferPanel.classList.contains('active')) {
-    const transferAddressInput = document.getElementById('private-recipient');
+    const transferAddressInput = document.getElementById('transfer-recipient');
     if (transferAddressInput) {
       const address = transferAddressInput.value.trim();
       // Only lookup if address exists and has valid format
@@ -646,7 +655,19 @@ export function setupProviderListeners() {
     } else {
       state.publicBalance = '0.00';
       state.privateBalance = '0.00';
-      connectWallet();
+      connectWallet().then(() => {
+        // Re-check recipient registration status after account change
+        const transferRecipient = document.getElementById('transfer-recipient');
+        const privacyModeToggle = document.getElementById('privacy-mode-toggle');
+        
+        if (transferRecipient && privacyModeToggle?.checked) {
+          const address = transferRecipient.value.trim();
+          if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
+            console.log('Account changed, re-checking recipient registration...');
+            handleTransferLookup(address);
+          }
+        }
+      });
     }
   });
 

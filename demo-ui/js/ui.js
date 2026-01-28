@@ -280,6 +280,9 @@ export function updateTransferLookup(mpk, viewPubKey, isFound) {
   
   if (!statusDot || !statusHint) return;
   
+  // Determine recipient registration status
+  let recipientRegistered = null;
+  
   if (isFound === 'checking') {
     // Checking state
     statusDot.className = 'status-dot checking';
@@ -288,58 +291,34 @@ export function updateTransferLookup(mpk, viewPubKey, isFound) {
   } else if (isFound && mpk) {
     // Privacy activated
     statusDot.className = 'status-dot registered';
-    statusHint.textContent = 'Privacy activated ✓';
+    statusHint.textContent = 'Privacy activated ✓ → Private Transfer (fully private)';
     statusHint.className = 'status-hint found';
-    updateTransferButtonState(true);
+    recipientRegistered = true;
   } else if (isFound === false) {
-    // Privacy not activated
+    // Privacy not activated - will use Unshield
     statusDot.className = 'status-dot unregistered';
-    statusHint.textContent = 'Privacy not activated ✗';
+    statusHint.textContent = 'Not activated → Recipient will receive in public balance';
     statusHint.className = 'status-hint not-found';
-    updateTransferButtonState(false);
+    recipientRegistered = false;
   } else if (isFound === 'invalid') {
     // Invalid address
     statusDot.className = 'status-dot unregistered';
     statusHint.textContent = 'Invalid address';
     statusHint.className = 'status-hint not-found';
-    updateTransferButtonState(false);
+    recipientRegistered = null;
   } else {
     // Reset state
     statusDot.className = 'status-dot';
-    statusHint.textContent = 'Check privacy status';
+    statusHint.textContent = 'Enter address to check';
     statusHint.className = 'status-hint';
-    updateTransferButtonState(false);
+    recipientRegistered = null;
   }
-}
-
-// Update Transfer button enabled/disabled state
-function updateTransferButtonState(recipientRegistered) {
-  const transferBtn = document.getElementById('private-transfer-btn');
-  if (!transferBtn) return;
   
-  // Also check if amount is valid
-  const amountInput = document.getElementById('private-amount');
-  const amount = amountInput?.value.trim() || '';
-  const isValidAmount = amount && !isNaN(amount) && parseFloat(amount) > 0;
-  
-  // Button enabled only if recipient registered AND amount is valid
-  const shouldEnable = recipientRegistered && isValidAmount;
-  
-  if (shouldEnable) {
-    transferBtn.disabled = false;
-    transferBtn.style.opacity = '1';
-    transferBtn.style.cursor = 'pointer';
-    transferBtn.title = '';
-  } else {
-    transferBtn.disabled = true;
-    transferBtn.style.opacity = '0.5';
-    transferBtn.style.cursor = 'not-allowed';
-    
-    if (!recipientRegistered) {
-      transferBtn.title = 'Recipient must activate privacy first';
-    } else if (!isValidAmount) {
-      transferBtn.title = 'Please enter a valid amount';
-    }
+  // Update flow indicator if function exists (defined in app.js)
+  if (typeof window.updateTransferFlow === 'function') {
+    const privacyModeToggle = document.getElementById('privacy-mode-toggle');
+    const usePrivacy = privacyModeToggle?.checked || false;
+    window.updateTransferFlow(usePrivacy, recipientRegistered);
   }
 }
 

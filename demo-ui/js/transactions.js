@@ -1,6 +1,6 @@
 // Transaction Functions (Shield, Unshield, Transfer)
 import { CONFIG, contracts, erc20TokenInfo } from './config.js';
-import { ensureEthers, validateAmount } from './utils.js';
+import { ensureEthers, validateAmount, waitForTransactionFast } from './utils.js';
 import { walletState, addTransaction, updateTransactionStatus, refreshBalances } from './wallet.js';
 import * as UI from './ui.js';
 
@@ -249,9 +249,10 @@ export async function handleShield(amountValue) {
   }
 }
 
-// Unshield function
-export async function handleUnshield(amountValue) {
-  console.log('Unshield button clicked, amount:', amountValue);
+// Unshield function (supports recipient address parameter)
+export async function handleUnshield(amountValue, recipientAddress = null) {
+  const recipient = recipientAddress || walletState.account;  // Default to self if not specified
+  console.log('Unshield button clicked, amount:', amountValue, 'recipient:', recipient);
   
   if (!walletState.signer || !walletState.account) {
     console.error('Unshield failed: Wallet not connected');
@@ -292,9 +293,8 @@ export async function handleUnshield(amountValue) {
     
     UI.setButtonLoading('#unshield-btn', true, 'Preparing...');
     UI.setButtonLoading('#convert-action-btn', true, 'Preparing...');
-    const recipient = walletState.account;
 
-    // Prepare unshield transaction
+    // Prepare unshield transaction (recipient can be self or other address)
     const unshieldData = await walletState.railgunWallet.prepareUnshieldTransaction(
       walletState.account,
       amountWei.toString(),
@@ -327,21 +327,33 @@ export async function handleUnshield(amountValue) {
     UI.setButtonLoading('#convert-action-btn', true, 'Broadcasting...');
     const result = await broadcast('unshield', formattedTransaction);
     
-    // Add pending transaction
-    addTransaction('unshield', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
+    // Add pending transaction (distinguish between unshield to self vs transfer out)
+    const isSelf = recipient.toLowerCase() === walletState.account.toLowerCase();
+    const { formatAddress } = await import('./utils.js');
+    
+    if (isSelf) {
+      addTransaction('unshield', 'Unshield', `Withdraw to public balance`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
+    } else {
+      addTransaction('transfer-out', 'Transfer Out', `To ${formatAddress(recipient)} (public)`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
+    }
 
-    // Wait for transaction confirmation
+    // Wait for transaction confirmation with fast polling
     UI.setButtonLoading('#unshield-btn', true, 'Confirming...');
     UI.setButtonLoading('#convert-action-btn', true, 'Confirming...');
-    const receipt = await walletState.provider.waitForTransaction(result.txHash);
+    const receipt = await waitForTransactionFast(walletState.provider, result.txHash);
     
     if (receipt.status === 0) {
-      updateTransactionStatus(result.txHash, 'failed', 'Unshield', `Unshield reverted`);
+      const title = isSelf ? 'Unshield' : 'Transfer Out';
+      updateTransactionStatus(result.txHash, 'failed', title, `Transaction reverted`);
       throw new Error('Transaction reverted');
     }
     
     // Update to success
-    updateTransactionStatus(result.txHash, 'success', 'Unshield', `Unshield ${amountValue} ${erc20TokenInfo.symbol}`);
+    if (isSelf) {
+      updateTransactionStatus(result.txHash, 'success', 'Unshield', `Withdrawn to public balance`);
+    } else {
+      updateTransactionStatus(result.txHash, 'success', 'Transfer Out', `To ${formatAddress(recipient)} (public)`);
+    }
 
     // Scan transaction and refresh balances (must complete before unlocking button)
     UI.setButtonLoading('#unshield-btn', true, 'Updating balances...');
@@ -360,24 +372,24 @@ export async function handleUnshield(amountValue) {
 
 // ERC20 Transfer function (non-private)
 export async function handleERC20Transfer(recipientAddress, amountValue) {
-  console.log('ERC20 Transfer button clicked, recipient:', recipientAddress, 'amount:', amountValue);
+  console.log('Public Transfer, recipient:', recipientAddress, 'amount:', amountValue);
   
   if (!walletState.signer || !walletState.account) {
-    console.error('ERC20 Transfer failed: Wallet not connected');
+    console.error('Public Transfer failed: Wallet not connected');
     return;
   }
 
   try {
     validateAmount(amountValue);
   } catch (error) {
-    console.error('ERC20 Transfer failed: Invalid amount -', error.message);
+    console.error('Public Transfer failed: Invalid amount -', error.message);
     return;
   }
 
   const ethersLib = ensureEthers();
   
   if (!ethersLib.utils.isAddress(recipientAddress)) {
-    console.error('ERC20 Transfer failed: Invalid recipient address -', recipientAddress);
+    console.error('Public Transfer failed: Invalid recipient address -', recipientAddress);
     return;
   }
 
@@ -399,29 +411,29 @@ export async function handleERC20Transfer(recipientAddress, amountValue) {
     // Send ERC20 transfer
     erc20Tx = await testERC20.transfer(recipientAddress, amountWei);
     const { formatAddress } = await import('./utils.js');
-    addTransaction('erc20', 'ERC20 Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, erc20Tx.hash, 'pending');
+    addTransaction('erc20', 'Public Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, erc20Tx.hash, 'pending');
     
     const receipt = await erc20Tx.wait();
     
     if (receipt.status === 0) {
-      updateTransactionStatus(erc20Tx.hash, 'failed', 'ERC20 Transfer', `Transfer reverted`);
+      updateTransactionStatus(erc20Tx.hash, 'failed', 'Public Transfer', `Transfer reverted`);
       throw new Error('Transaction reverted');
     }
 
     // Update UI
-    updateTransactionStatus(erc20Tx.hash, 'success', 'ERC20 Transfer', `To ${formatAddress(recipientAddress)}`);
+    updateTransactionStatus(erc20Tx.hash, 'success', 'Public Transfer', `To ${formatAddress(recipientAddress)}`);
     
     // Refresh balances
     await refreshBalances();
-    console.log('✅ ERC20 Transfer successful');
+    console.log('✅ Public Transfer successful');
 
   } catch (error) {
-    console.error('ERC20 Transfer failed:', error);
+    console.error('Public Transfer failed:', error);
     
     let txHash = erc20Tx?.hash || error.transaction?.hash || error.receipt?.transactionHash;
     
     if (txHash) {
-      updateTransactionStatus(txHash, 'failed', 'ERC20 Transfer', `Failed to transfer ${amountValue} ${erc20TokenInfo.symbol}`);
+      updateTransactionStatus(txHash, 'failed', 'Public Transfer', `Failed to transfer ${amountValue} ${erc20TokenInfo.symbol}`);
     }
     
   } finally {
@@ -430,8 +442,9 @@ export async function handleERC20Transfer(recipientAddress, amountValue) {
 }
 
 // Transfer function
-export async function handleTransfer(recipientAddress, amountValue) {
-  console.log('Transfer button clicked, recipient:', recipientAddress, 'amount:', amountValue);
+// Private Transfer (to registered recipient)
+async function doPrivateTransfer(recipientAddress, amountValue, userInfo) {
+  console.log('Private Transfer, recipient:', recipientAddress, 'amount:', amountValue);
   
   if (!walletState.signer) {
     console.error('Transfer failed: Wallet not connected');
@@ -454,16 +467,6 @@ export async function handleTransfer(recipientAddress, amountValue) {
   
   if (!ethersLib.utils.isAddress(recipientAddress)) {
     console.error('Transfer failed: Invalid recipient address -', recipientAddress);
-    return;
-  }
-
-  // Pre-check recipient and balance before showing loading state
-  const { lookupMPK } = await import('./wallet.js');
-  const userInfo = await lookupMPK(recipientAddress);
-  
-  if (!userInfo) {
-    console.error('Recipient privacy not activated');
-    alert('Recipient has not activated privacy mode. They need to connect and activate privacy first.');
     return;
   }
 
@@ -524,9 +527,9 @@ export async function handleTransfer(recipientAddress, amountValue) {
     // Add pending transaction
     addTransaction('transfer', 'Private Transfer', `To ${formatAddress(recipientAddress)}`, `-${amountValue} ${erc20TokenInfo.symbol}`, result.txHash, 'pending');
 
-    // Wait for transaction confirmation
+    // Wait for transaction confirmation with fast polling
     UI.setButtonLoading('#private-transfer-btn', true, 'Confirming...');
-    const receipt = await walletState.provider.waitForTransaction(result.txHash);
+    const receipt = await waitForTransactionFast(walletState.provider, result.txHash);
     
     if (receipt.status === 0) {
       updateTransactionStatus(result.txHash, 'failed', 'Private Transfer', `Transfer reverted`);
@@ -551,5 +554,51 @@ export async function handleTransfer(recipientAddress, amountValue) {
     console.error('Transfer failed:', error);
   } finally {
     UI.setButtonLoading('#private-transfer-btn', false);
+  }
+}
+
+// Unified Transfer function (handles both public and private transfers)
+export async function handleUnifiedTransfer(recipientAddress, amountValue, usePrivacy) {
+  console.log('Unified Transfer:', { recipientAddress, amountValue, usePrivacy });
+  
+  if (!walletState.signer || !walletState.account) {
+    console.error('Transfer failed: Wallet not connected');
+    return;
+  }
+
+  const ethersLib = ensureEthers();
+  
+  if (!ethersLib.utils.isAddress(recipientAddress)) {
+    console.error('Transfer failed: Invalid recipient address');
+    return;
+  }
+
+  try {
+    validateAmount(amountValue);
+  } catch (error) {
+    console.error('Transfer failed: Invalid amount -', error.message);
+    return;
+  }
+
+  if (usePrivacy) {
+    // Use privacy balance - check recipient registration
+    const { lookupMPK } = await import('./wallet.js');
+    const userInfo = await lookupMPK(recipientAddress);
+    const isRecipientRegistered = userInfo && userInfo.mpk !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+    
+    if (isRecipientRegistered) {
+      // Recipient registered → Private Transfer
+      console.log('→ Route: Private Transfer (recipient registered)');
+      await doPrivateTransfer(recipientAddress, amountValue, userInfo);
+    } else {
+      // Recipient not registered → Unshield to their public address
+      console.log('→ Route: Unshield to address (recipient not registered)');
+      console.log('⚠️  Recipient will receive tokens in public balance');
+      await handleUnshield(amountValue, recipientAddress);
+    }
+  } else {
+    // Use public balance → ERC20 Transfer
+    console.log('→ Route: ERC20 Transfer (public payment)');
+    await handleERC20Transfer(recipientAddress, amountValue);
   }
 }

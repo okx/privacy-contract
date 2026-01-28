@@ -9,11 +9,49 @@ const path = require('path');
 
 const PORT = 3000;
 
-// Server session ID (changes on every server restart)
-const SERVER_SESSION_ID = Date.now().toString();
-
 // Determine if we're in local mode
 const IS_LOCAL = process.env.LOCAL === 'true';
+
+// Server session ID (persisted to file, only changes on manual reset)
+const SESSION_FILE = path.join(__dirname, '.session');
+
+function getOrCreateSessionId() {
+  // In local mode, always delete session file to start fresh
+  if (IS_LOCAL) {
+    try {
+      if (fs.existsSync(SESSION_FILE)) {
+        fs.unlinkSync(SESSION_FILE);
+        console.log('🧹 Deleted .session file (LOCAL mode)');
+      }
+    } catch (e) {
+      console.warn('Failed to delete session file:', e.message);
+    }
+  } else {
+    // In non-local mode, try to load existing session
+    try {
+      if (fs.existsSync(SESSION_FILE)) {
+        const sessionId = fs.readFileSync(SESSION_FILE, 'utf8').trim();
+        if (sessionId) {
+          console.log('📁 Loaded existing session ID:', sessionId);
+          return sessionId;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load session file:', e.message);
+    }
+  }
+  
+  const newSessionId = Date.now().toString();
+  try {
+    fs.writeFileSync(SESSION_FILE, newSessionId);
+    console.log('✨ Created new session ID:', newSessionId);
+  } catch (e) {
+    console.warn('Failed to save session file:', e.message);
+  }
+  return newSessionId;
+}
+
+const SERVER_SESSION_ID = getOrCreateSessionId();
 
 // Broadcast configuration (dedicated broadcast account)
 const DEFAULT_BROADCAST_PRIVATE_KEY = '0xd4a3fa952d8e3ad2e330f1ad6cff6ef02ddb89c146c2d3ab7e664f51b0bbaf3a';
@@ -148,25 +186,6 @@ function sendJson(res, statusCode, data) {
     'Access-Control-Allow-Headers': 'Content-Type'
   });
   res.end(JSON.stringify(data));
-}
-
-// Wait for transaction receipt with fallback polling
-async function waitForReceipt(txHash) {
-  try {
-    return await provider.waitForTransaction(txHash);
-  } catch (waitError) {
-    // Fallback to receipt polling if RPC has issues
-    if (waitError.code === 'SERVER_ERROR') {
-      console.log('   Receipt polling fallback...');
-      for (let i = 0; i < 60; i++) {
-        const receipt = await provider.getTransactionReceipt(txHash).catch(() => null);
-        if (receipt) return receipt;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      throw new Error('Transaction confirmation timeout');
-    }
-    throw waitError;
-  }
 }
 
 // Handle API requests

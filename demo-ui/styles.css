@@ -262,10 +262,10 @@ body {
 }
 
 .overview-value {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   font-family: 'JetBrains Mono', monospace;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .privacy-ratio-bar {
@@ -869,8 +869,8 @@ body {
 }
 
 .mpk-status-indicator .status-dot.unregistered {
-  background: var(--danger);
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+  background: var(--accent-blue);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
 }
 
 .mpk-status-indicator .status-dot.checking {
@@ -900,7 +900,7 @@ body {
 }
 
 .status-hint.not-found {
-  color: var(--danger);
+  color: var(--accent-blue);
 }
 
 /* Submit Button */

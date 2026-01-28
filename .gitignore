@@ -33,6 +33,7 @@ scripts/ephemeral
 node.out
 deployments.json
 demo-ui/deployments.json
+demo-ui/.session
 .env
 
 # Generated/Built Files

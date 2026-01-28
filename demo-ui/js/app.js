@@ -1,6 +1,6 @@
 // Main Application Entry Point
 import { loadContractConfig, connectWallet, registerMPK, setupProviderListeners, handleTransferLookup, walletState, refreshBalances } from './wallet.js';
-import { handleShield, handleUnshield, handleTransfer, handleERC20Transfer } from './transactions.js';
+import { handleShield, handleUnshield, handleUnifiedTransfer } from './transactions.js';
 import * as UI from './ui.js';
 import { waitForLibrary, debounce, copyToClipboard } from './utils.js';
 
@@ -148,24 +148,18 @@ class PrivacyWalletApp {
     });
 
     // Submit buttons
-    const erc20TransferBtn = document.getElementById('erc20-transfer-btn');
-    const privateTransferBtn = document.getElementById('private-transfer-btn');
+    const transferBtn = document.getElementById('transfer-btn');
     const shieldBtn = document.getElementById('shield-btn');
     const unshieldBtn = document.getElementById('unshield-btn');
     
-    if (erc20TransferBtn) {
-      erc20TransferBtn.addEventListener('click', () => {
-        const recipientInput = document.getElementById('erc20-recipient');
-        const amountInput = document.getElementById('erc20-amount');
-        handleERC20Transfer(recipientInput.value.trim(), amountInput.value.trim());
-      });
-    }
-
-    if (privateTransferBtn) {
-      privateTransferBtn.addEventListener('click', () => {
-        const recipientInput = document.getElementById('private-recipient');
-        const amountInput = document.getElementById('private-amount');
-        handleTransfer(recipientInput.value.trim(), amountInput.value.trim());
+    if (transferBtn) {
+      transferBtn.addEventListener('click', () => {
+        const recipientInput = document.getElementById('transfer-recipient');
+        const amountInput = document.getElementById('transfer-amount');
+        const privacyModeToggle = document.getElementById('privacy-mode-toggle');
+        const usePrivacy = privacyModeToggle ? privacyModeToggle.checked : false;
+        
+        handleUnifiedTransfer(recipientInput.value.trim(), amountInput.value.trim(), usePrivacy);
       });
     }
 
@@ -192,12 +186,13 @@ class PrivacyWalletApp {
         let balance = 0;
         let amountInput;
         
-        if (mode === 'erc20') {
-          amountInput = document.getElementById('erc20-amount');
-          balance = parseFloat(walletState.publicBalance) || 0;
-        } else if (mode === 'private') {
-          amountInput = document.getElementById('private-amount');
-          balance = parseFloat(walletState.privateBalance) || 0;
+        if (mode === 'transfer') {
+          amountInput = document.getElementById('transfer-amount');
+          const privacyModeToggle = document.getElementById('privacy-mode-toggle');
+          const usePrivacy = privacyModeToggle?.checked || false;
+          balance = usePrivacy 
+            ? parseFloat(walletState.privateBalance) || 0
+            : parseFloat(walletState.publicBalance) || 0;
         } else if (mode === 'shield') {
           amountInput = document.getElementById('shield-amount');
           balance = parseFloat(walletState.publicBalance) || 0;
@@ -221,70 +216,171 @@ class PrivacyWalletApp {
       });
     });
 
-    // ERC20 Transfer validation
-    const erc20RecipientInput = document.getElementById('erc20-recipient');
-    const erc20AmountInput = document.getElementById('erc20-amount');
+    // Unified Transfer form validation and privacy toggle
+    const transferRecipientInput = document.getElementById('transfer-recipient');
+    const transferAmountInput = document.getElementById('transfer-amount');
+    const privacyModeToggle = document.getElementById('privacy-mode-toggle');
+    const mpkStatusContainer = document.getElementById('mpk-status-container');
     
-    const validateERC20Form = () => {
-      if (!erc20TransferBtn) return;
+    // Update flow indicator based on privacy toggle (export to window for ui.js)
+    const updateTransferFlow = (usePrivacy, recipientRegistered = null) => {
+      const sourceIcon = document.getElementById('transfer-flow-source-icon');
+      const sourceLabel = document.getElementById('transfer-flow-source-label');
+      const methodIcon = document.getElementById('transfer-flow-method-icon');
+      const methodLabel = document.getElementById('transfer-flow-method-label');
+      const destIcon = document.getElementById('transfer-flow-dest-icon');
+      const destLabel = document.getElementById('transfer-flow-dest-label');
       
-      const recipient = erc20RecipientInput?.value.trim() || '';
-      const amount = erc20AmountInput?.value.trim() || '';
+      if (usePrivacy) {
+        // Privacy payment
+        sourceIcon.className = 'flow-icon private';
+        sourceIcon.textContent = '🔐';
+        sourceLabel.textContent = 'Your Private';
+        
+        if (recipientRegistered === true) {
+          // Private → Private
+          methodIcon.style.background = 'var(--accent-purple-dim)';
+          methodIcon.style.color = 'var(--accent-purple)';
+          methodIcon.textContent = '🔄';
+          methodLabel.textContent = 'Private Transfer';
+          destIcon.className = 'flow-icon private';
+          destIcon.textContent = '🔐';
+          destLabel.textContent = 'Their Private';
+        } else if (recipientRegistered === false) {
+          // Private → Public (Unshield)
+          methodIcon.style.background = 'var(--accent-orange-dim)';
+          methodIcon.style.color = 'var(--accent-orange)';
+          methodIcon.textContent = '📤';
+          methodLabel.textContent = 'Unshield';
+          destIcon.className = 'flow-icon wallet';
+          destIcon.textContent = '💳';
+          destLabel.textContent = 'Their Public';
+        } else {
+          // Unknown
+          methodIcon.style.background = 'var(--accent-purple-dim)';
+          methodIcon.style.color = 'var(--accent-purple)';
+          methodIcon.textContent = '🔄';
+          methodLabel.textContent = 'Privacy Transfer';
+          destIcon.className = 'flow-icon';
+          destIcon.textContent = '❓';
+          destLabel.textContent = 'Recipient';
+        }
+      } else {
+        // Public payment (ERC20)
+        sourceIcon.className = 'flow-icon wallet';
+        sourceIcon.textContent = '💳';
+        sourceLabel.textContent = 'Your Wallet';
+        methodIcon.style.background = 'var(--accent-blue-dim)';
+        methodIcon.style.color = 'var(--accent-blue)';
+        methodIcon.textContent = '📤';
+        methodLabel.textContent = 'ERC20 Transfer';
+        destIcon.className = 'flow-icon wallet';
+        destIcon.textContent = '💳';
+        destLabel.textContent = 'Recipient';
+      }
+    };
+    
+    // Export updateTransferFlow to window for ui.js
+    window.updateTransferFlow = updateTransferFlow;
+    
+    // Privacy mode toggle change handler
+    if (privacyModeToggle) {
+      privacyModeToggle.addEventListener('change', (e) => {
+        const usePrivacy = e.target.checked;
+        
+        // Show/hide MPK status indicator
+        if (mpkStatusContainer) {
+          mpkStatusContainer.style.display = usePrivacy ? 'flex' : 'none';
+        }
+        
+        // Update flow indicator
+        updateTransferFlow(usePrivacy);
+        
+        // Re-check recipient if privacy enabled
+        if (usePrivacy && transferRecipientInput) {
+          const address = transferRecipientInput.value.trim();
+          if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
+            handleTransferLookup(address);
+          }
+        }
+        
+        // Validate form
+        validateUnifiedTransferForm();
+      });
+    }
+    
+    // Unified transfer validation
+    const validateUnifiedTransferForm = () => {
+      if (!transferBtn) return;
+      
+      const recipient = transferRecipientInput?.value.trim() || '';
+      const amount = transferAmountInput?.value.trim() || '';
+      const usePrivacy = privacyModeToggle?.checked || false;
       
       const isValidAddress = /^0x[a-fA-F0-9]{40}$/.test(recipient);
       const isValidAmount = amount && !isNaN(amount) && parseFloat(amount) > 0;
       
-      erc20TransferBtn.disabled = !(isValidAddress && isValidAmount);
+      // Check balance
+      let hasBalance = false;
+      if (usePrivacy) {
+        hasBalance = parseFloat(walletState.privateBalance) >= parseFloat(amount || 0);
+      } else {
+        hasBalance = parseFloat(walletState.publicBalance) >= parseFloat(amount || 0);
+      }
+      
+      const shouldEnable = isValidAddress && isValidAmount && hasBalance;
+      
+      if (shouldEnable) {
+        transferBtn.disabled = false;
+        transferBtn.style.opacity = '1';
+        transferBtn.style.cursor = 'pointer';
+        transferBtn.title = '';
+      } else {
+        transferBtn.disabled = true;
+        transferBtn.style.opacity = '0.5';
+        transferBtn.style.cursor = 'not-allowed';
+        
+        if (!isValidAddress) {
+          transferBtn.title = 'Please enter a valid recipient address';
+        } else if (!isValidAmount) {
+          transferBtn.title = 'Please enter a valid amount';
+        } else if (!hasBalance) {
+          transferBtn.title = usePrivacy ? 'Insufficient private balance' : 'Insufficient public balance';
+        }
+      }
     };
     
-    if (erc20RecipientInput) {
-      erc20RecipientInput.addEventListener('input', validateERC20Form);
-    }
-    if (erc20AmountInput) {
-      erc20AmountInput.addEventListener('input', validateERC20Form);
-    }
-    validateERC20Form(); // Initial check
-
-    // Private transfer address input with debounced lookup and validation
-    const privateRecipientInput = document.getElementById('private-recipient');
-    const privateAmountInput = document.getElementById('private-amount');
-    
-    if (privateRecipientInput) {
+    if (transferRecipientInput) {
       const debouncedLookup = debounce((address) => {
         if (!address) {
           handleTransferLookup(null);
+          validateUnifiedTransferForm();
           return;
         }
         
         if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+          validateUnifiedTransferForm();
           return;
         }
         
-        handleTransferLookup(address);
+        const usePrivacy = privacyModeToggle?.checked || false;
+        if (usePrivacy) {
+          handleTransferLookup(address);
+        } else {
+          validateUnifiedTransferForm();
+        }
       }, 500);
 
-      privateRecipientInput.addEventListener('input', (e) => {
+      transferRecipientInput.addEventListener('input', (e) => {
         debouncedLookup(e.target.value.trim());
       });
     }
     
-    // Trigger validation when amount changes
-    if (privateAmountInput) {
-      privateAmountInput.addEventListener('input', () => {
-        // Directly call updateTransferButtonState with current lookup result
-        const address = privateRecipientInput?.value.trim();
-        if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
-          // Re-check recipient status
-          handleTransferLookup(address);
-        } else {
-          // No valid address, disable button
-          if (privateTransferBtn) {
-            privateTransferBtn.disabled = true;
-            privateTransferBtn.style.opacity = '0.5';
-          }
-        }
-      });
+    if (transferAmountInput) {
+      transferAmountInput.addEventListener('input', validateUnifiedTransferForm);
     }
+    
+    validateUnifiedTransferForm(); // Initial check
 
     // Custom events
     window.addEventListener('register-mpk', () => registerMPK());
@@ -315,19 +411,34 @@ class PrivacyWalletApp {
   }
 
   handlePrivacyModeToggle(isEnabled) {
-    const erc20Form = document.getElementById('erc20-transfer-form');
-    const privateForm = document.getElementById('private-transfer-form');
     const privacyStatus = document.getElementById('privacy-status');
     const logoImg = document.querySelector('.logo-img');
+    const mpkStatusContainer = document.getElementById('mpk-status-container');
+    const transferRecipient = document.getElementById('transfer-recipient');
     
     if (isEnabled) {
       // Add privacy-active class to logo
       if (logoImg) {
         logoImg.classList.add('privacy-active');
       }
-      // Switch to private mode
-      erc20Form.style.display = 'none';
-      privateForm.style.display = 'block';
+      
+      // Show MPK status indicator
+      if (mpkStatusContainer) {
+        mpkStatusContainer.style.display = 'flex';
+      }
+      
+      // Update flow indicator
+      if (typeof window.updateTransferFlow === 'function') {
+        window.updateTransferFlow(true);
+      }
+      
+      // Re-check recipient if address entered
+      if (transferRecipient) {
+        const address = transferRecipient.value.trim();
+        if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
+          handleTransferLookup(address);
+        }
+      }
       
       // Update status display
       if (privacyStatus) {
@@ -357,9 +468,15 @@ class PrivacyWalletApp {
         logoImg.classList.remove('privacy-active');
       }
       
-      // Switch to ERC20 mode
-      erc20Form.style.display = 'block';
-      privateForm.style.display = 'none';
+      // Hide MPK status indicator
+      if (mpkStatusContainer) {
+        mpkStatusContainer.style.display = 'none';
+      }
+      
+      // Update flow indicator
+      if (typeof window.updateTransferFlow === 'function') {
+        window.updateTransferFlow(false);
+      }
       
       // Update status display
       if (privacyStatus) {

@@ -133,82 +133,36 @@
             </div>
           </div>
 
-          <!-- ERC20 Transfer (Privacy Mode OFF) -->
-          <div id="erc20-transfer-form" class="transfer-mode-form">
-            <div class="flow-indicator">
+          <!-- Unified Transfer Form -->
+          <div id="transfer-form" class="transfer-mode-form">
+            <!-- Flow Indicator (dynamic based on Privacy Mode toggle) -->
+            <div class="flow-indicator" id="transfer-flow">
               <div class="flow-step">
-                <div class="flow-icon wallet">💳</div>
-                <span class="flow-label">Your Wallet</span>
+                <div class="flow-icon wallet" id="transfer-flow-source-icon">💳</div>
+                <span class="flow-label" id="transfer-flow-source-label">Your Wallet</span>
               </div>
               <span class="flow-arrow">→</span>
               <div class="flow-step">
-                <div class="flow-icon" style="background: var(--accent-blue-dim); color: var(--accent-blue);">📤</div>
-                <span class="flow-label">ERC20 Transfer</span>
+                <div class="flow-icon" id="transfer-flow-method-icon" style="background: var(--accent-blue-dim); color: var(--accent-blue);">📤</div>
+                <span class="flow-label" id="transfer-flow-method-label">ERC20 Transfer</span>
               </div>
               <span class="flow-arrow">→</span>
               <div class="flow-step">
-                <div class="flow-icon wallet">💳</div>
-                <span class="flow-label">Recipient</span>
+                <div class="flow-icon wallet" id="transfer-flow-dest-icon">💳</div>
+                <span class="flow-label" id="transfer-flow-dest-label">Recipient</span>
               </div>
             </div>
 
             <div class="form-group">
               <div class="form-label">
                 <span>Recipient Address</span>
-              </div>
-              <div class="input-wrapper">
-                <input type="text" class="form-input" id="erc20-recipient" placeholder="0x...">
-              </div>
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">
-                <span>Amount</span>
-                <div class="quick-btns">
-                  <button class="quick-btn" data-mode="erc20" data-action="random">RANDOM</button>
-                  <button class="quick-btn" data-mode="erc20" data-action="max">MAX</button>
-                </div>
-              </div>
-              <div class="input-wrapper">
-                <input type="text" class="form-input" id="erc20-amount" placeholder="0.0">
-                <span class="input-suffix">TOKEN</span>
-              </div>
-            </div>
-
-            <button class="submit-btn erc20" id="erc20-transfer-btn" disabled>
-              📤 Public Transfer
-            </button>
-          </div>
-
-          <!-- Private Transfer (Privacy Mode ON) -->
-          <div id="private-transfer-form" class="transfer-mode-form" style="display: none;">
-            <div class="flow-indicator">
-              <div class="flow-step">
-                <div class="flow-icon private">🔐</div>
-                <span class="flow-label">Your Private</span>
-              </div>
-              <span class="flow-arrow">→</span>
-              <div class="flow-step">
-                <div class="flow-icon" style="background: var(--accent-purple-dim); color: var(--accent-purple);">🔄</div>
-                <span class="flow-label">ZK Transfer</span>
-              </div>
-              <span class="flow-arrow">→</span>
-              <div class="flow-step">
-                <div class="flow-icon private">🔐</div>
-                <span class="flow-label">Their Private</span>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">
-                <span>Recipient Address</span>
-                <div class="mpk-status-indicator">
+                <div class="mpk-status-indicator" id="mpk-status-container" style="display: none;">
                   <span class="status-dot" id="transfer-status-dot"></span>
-                  <span class="status-hint" id="transfer-status-hint">Check privacy status</span>
+                  <span class="status-hint" id="transfer-status-hint">Checking privacy status...</span>
                 </div>
               </div>
               <div class="input-wrapper">
-                <input type="text" class="form-input" id="private-recipient" placeholder="0x...">
+                <input type="text" class="form-input" id="transfer-recipient" placeholder="0x...">
               </div>
             </div>
 
@@ -216,18 +170,18 @@
               <div class="form-label">
                 <span>Amount</span>
                 <div class="quick-btns">
-                  <button class="quick-btn" data-mode="private" data-action="random">RANDOM</button>
-                  <button class="quick-btn" data-mode="private" data-action="max">MAX</button>
+                  <button class="quick-btn" data-mode="transfer" data-action="random">RANDOM</button>
+                  <button class="quick-btn" data-mode="transfer" data-action="max">MAX</button>
                 </div>
               </div>
               <div class="input-wrapper">
-                <input type="text" class="form-input" id="private-amount" placeholder="0.0">
+                <input type="text" class="form-input" id="transfer-amount" placeholder="0.0">
                 <span class="input-suffix">TOKEN</span>
               </div>
             </div>
 
-            <button class="submit-btn transfer" id="private-transfer-btn" disabled>
-              🔄 Private Transfer
+            <button class="submit-btn transfer" id="transfer-btn" disabled>
+              💸 Transfer
             </button>
           </div>
         </div>
