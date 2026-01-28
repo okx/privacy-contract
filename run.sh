@@ -108,13 +108,12 @@ setup_rapidsnark_remote() {
     echo "Rapidsnark mode: remote (download pre-built binary)"
 
     local VERSION="${RAPIDSNARK_REMOTE_VERSION:-v0.0.8}"
-    local REMOTE_BIN_DIR="${SCRIPT_DIR}/tmp/rapidsnark-bin"
-    local RAPIDSNARK_BIN="${REMOTE_BIN_DIR}/rapidsnark"
+    local RAPIDSNARK_BIN="${RAPIDSNARK_BIN_PATH:-/usr/local/bin/rapidsnark}"
+    local INSTALL_DIR=$(dirname "$RAPIDSNARK_BIN")
 
     # Check if already downloaded
     if [ -x "$RAPIDSNARK_BIN" ]; then
         echo "rapidsnark already downloaded: $RAPIDSNARK_BIN"
-        export RAPIDSNARK_BIN_PATH="$RAPIDSNARK_BIN"
         return
     fi
 
@@ -151,8 +150,7 @@ setup_rapidsnark_remote() {
 
     echo "Download URL: $DOWNLOAD_URL"
 
-    # Create directory and download
-    mkdir -p "$REMOTE_BIN_DIR"
+    # Download to temp directory
     local TMP_DIR=$(mktemp -d)
 
     echo "Downloading to temp directory..."
@@ -169,16 +167,22 @@ setup_rapidsnark_remote() {
         exit 1
     fi
 
-    # Copy to local directory
-    cp "$PROVER_BIN" "$RAPIDSNARK_BIN"
-    chmod +x "$RAPIDSNARK_BIN"
+    # Install to target directory
+    echo "Installing to $RAPIDSNARK_BIN..."
+    if [ -w "$INSTALL_DIR" ]; then
+        cp "$PROVER_BIN" "$RAPIDSNARK_BIN"
+        chmod +x "$RAPIDSNARK_BIN"
+    else
+        echo "(requires sudo)"
+        sudo cp "$PROVER_BIN" "$RAPIDSNARK_BIN"
+        sudo chmod +x "$RAPIDSNARK_BIN"
+    fi
 
     # Cleanup
     rm -rf "$TMP_DIR"
 
     if [ -x "$RAPIDSNARK_BIN" ]; then
         echo "rapidsnark downloaded successfully to $RAPIDSNARK_BIN"
-        export RAPIDSNARK_BIN_PATH="$RAPIDSNARK_BIN"
     else
         echo "Download failed"
         exit 1
