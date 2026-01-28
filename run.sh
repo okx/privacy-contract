@@ -21,11 +21,14 @@ setup_rapidsnark() {
         server)
             setup_rapidsnark_server
             ;;
+        remote)
+            setup_rapidsnark_remote
+            ;;
         local|"")
             setup_rapidsnark_local
             ;;
         *)
-            echo "Unknown RAPIDSNARK_MODE: $RAPIDSNARK_MODE (expected: server or local)"
+            echo "Unknown RAPIDSNARK_MODE: $RAPIDSNARK_MODE (expected: server, remote, or local)"
             exit 1
             ;;
     esac
@@ -97,6 +100,88 @@ setup_rapidsnark_local() {
         ./install_rapidsnark.sh
     else
         echo "rapidsnark already installed: $rapidsnark_bin"
+    fi
+}
+
+# Setup rapidsnark in remote mode (download pre-built binary to local directory)
+setup_rapidsnark_remote() {
+    echo "Rapidsnark mode: remote (download pre-built binary)"
+
+    local VERSION="${RAPIDSNARK_REMOTE_VERSION:-v0.0.8}"
+    local REMOTE_BIN_DIR="${SCRIPT_DIR}/tmp/rapidsnark-bin"
+    local RAPIDSNARK_BIN="${REMOTE_BIN_DIR}/rapidsnark"
+
+    # Check if already downloaded
+    if [ -x "$RAPIDSNARK_BIN" ]; then
+        echo "rapidsnark already downloaded: $RAPIDSNARK_BIN"
+        export RAPIDSNARK_BIN_PATH="$RAPIDSNARK_BIN"
+        return
+    fi
+
+    echo "Downloading rapidsnark ${VERSION}..."
+
+    # Detect architecture and OS
+    local ARCH=$(uname -m)
+    local OS=$(uname -s)
+    local DOWNLOAD_URL=""
+    local ZIP_NAME=""
+
+    echo "Architecture: $ARCH, OS: $OS"
+
+    if [[ "$OS" == "Darwin" ]]; then
+        if [[ "$ARCH" == "arm64" ]]; then
+            DOWNLOAD_URL="https://github.com/iden3/rapidsnark/releases/download/${VERSION}/rapidsnark-macOS-arm64-${VERSION}.zip"
+            ZIP_NAME="rapidsnark-macOS-arm64-${VERSION}.zip"
+        else
+            DOWNLOAD_URL="https://github.com/iden3/rapidsnark/releases/download/${VERSION}/rapidsnark-macOS-x86_64-${VERSION}.zip"
+            ZIP_NAME="rapidsnark-macOS-x86_64-${VERSION}.zip"
+        fi
+    elif [[ "$OS" == "Linux" ]]; then
+        if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+            DOWNLOAD_URL="https://github.com/iden3/rapidsnark/releases/download/${VERSION}/rapidsnark-linux-arm64-${VERSION}.zip"
+            ZIP_NAME="rapidsnark-linux-arm64-${VERSION}.zip"
+        else
+            DOWNLOAD_URL="https://github.com/iden3/rapidsnark/releases/download/${VERSION}/rapidsnark-linux-x86_64-${VERSION}.zip"
+            ZIP_NAME="rapidsnark-linux-x86_64-${VERSION}.zip"
+        fi
+    else
+        echo "Unsupported OS: $OS"
+        exit 1
+    fi
+
+    echo "Download URL: $DOWNLOAD_URL"
+
+    # Create directory and download
+    mkdir -p "$REMOTE_BIN_DIR"
+    local TMP_DIR=$(mktemp -d)
+
+    echo "Downloading to temp directory..."
+    curl -L -o "${TMP_DIR}/${ZIP_NAME}" "$DOWNLOAD_URL"
+
+    echo "Extracting..."
+    unzip -q "${TMP_DIR}/${ZIP_NAME}" -d "$TMP_DIR"
+
+    # Find the prover binary
+    local PROVER_BIN=$(find "$TMP_DIR" -name "prover" -type f | head -1)
+    if [ -z "$PROVER_BIN" ]; then
+        echo "prover binary not found in archive"
+        rm -rf "$TMP_DIR"
+        exit 1
+    fi
+
+    # Copy to local directory
+    cp "$PROVER_BIN" "$RAPIDSNARK_BIN"
+    chmod +x "$RAPIDSNARK_BIN"
+
+    # Cleanup
+    rm -rf "$TMP_DIR"
+
+    if [ -x "$RAPIDSNARK_BIN" ]; then
+        echo "rapidsnark downloaded successfully to $RAPIDSNARK_BIN"
+        export RAPIDSNARK_BIN_PATH="$RAPIDSNARK_BIN"
+    else
+        echo "Download failed"
+        exit 1
     fi
 }
 
