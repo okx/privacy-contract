@@ -118,9 +118,9 @@ fi
 yarn install
 
 #1. start hardhat node (local ethereum node)
-# Kill any existing process on port 8546
-lsof -ti :8546 | xargs kill 2>/dev/null || true
-npx hardhat node --port 8546 > hardhat-node.log 2>&1 &
+# Kill any existing process on port 8645
+lsof -ti :8645 | xargs kill 2>/dev/null || true
+npx hardhat node --port 8645 > hardhat-node.log 2>&1 &
 HARDHAT_PID=$!
 
 # Auto cleanup when script exits
@@ -132,7 +132,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sleep 3
+# Wait for hardhat node to be ready
+echo "Waiting for Hardhat node to start..."
+for i in {1..30}; do
+    if curl -s -X POST -H "Content-Type: application/json" \
+       --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+       http://127.0.0.1:8645 > /dev/null 2>&1; then
+        echo "Hardhat node ready!"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "Error: Hardhat node failed to start after 30 seconds"
+        echo "Check hardhat-node.log for details"
+        exit 1
+    fi
+    sleep 1
+done
 
 #2. deploy railgun contracts
 npx hardhat deploy:test --network localhost
