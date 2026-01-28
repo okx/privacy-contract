@@ -1,6 +1,7 @@
 // Wallet Management Module
 import { CONFIG, contracts, erc20TokenInfo, loadContractConfig as loadConfig } from './config.js';
 import { ensureEthers, getMetaMaskProvider, storage } from './utils.js';
+import { TX_TYPES, TX_LABELS, TX_ICONS } from './constants.js';
 import * as UI from './ui.js';
 
 // Wallet State (encapsulated)
@@ -186,7 +187,6 @@ export async function connectWallet() {
     
     await initializeRailgunWallet();
     loadTransactions();
-    await generateMPK();
     await refreshBalances();
     updateUI();
     
@@ -283,7 +283,7 @@ export async function refreshBalances() {
 }
 
 // Generate MPK
-async function generateMPK() {
+export async function generateMPK() {
   const ethersLib = ensureEthers();
   
   const savedKeys = await state.railgunWallet.loadKeys(state.account);
@@ -403,9 +403,16 @@ export async function registerMPK() {
     return;
   }
 
+  // Generate MPK first if not exists
   if (!state.mpk || !state.derivedKeys.viewingPublicKey) {
-    console.warn('MPK Not Ready: MPK not generated');
-    return;
+    console.log('MPK not found, generating...');
+    await generateMPK();
+    
+    // Check again after generation
+    if (!state.mpk || !state.derivedKeys.viewingPublicKey) {
+      console.warn('MPK generation failed or cancelled');
+      return;
+    }
   }
 
   if (contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
@@ -524,16 +531,9 @@ function saveTransactions() {
 }
 
 export function addTransaction(type, title, description, amount, txHash = null, status = 'success') {
-  const icons = {
-    shield: '🛡️',
-    unshield: '📤',
-    transfer: '🔄',
-    'transfer-out': '💸'
-  };
-
   state.transactions.unshift({
     type,
-    icon: icons[type] || '📝',
+    icon: TX_ICONS[type],
     title,
     description,
     amount,

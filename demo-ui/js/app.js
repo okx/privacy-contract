@@ -251,7 +251,7 @@ class PrivacyWalletApp {
           methodIcon.style.background = 'var(--accent-orange-dim)';
           methodIcon.style.color = 'var(--accent-orange)';
           methodIcon.textContent = '📤';
-          methodLabel.textContent = 'Unshield';
+          methodLabel.textContent = 'Private to Public';
           destIcon.className = 'flow-icon wallet';
           destIcon.textContent = '💳';
           destLabel.textContent = 'Their Public';
@@ -448,18 +448,17 @@ class PrivacyWalletApp {
         if (walletState.isRegistered) {
           statusDot.classList.remove('unregistered');
           statusDot.classList.add('registered');
-          statusText.textContent = 'Privacy activated';
+          statusText.textContent = 'Activated';
         } else {
           statusDot.classList.remove('registered');
           statusDot.classList.add('unregistered');
-          statusText.textContent = 'Activating...';
+          statusText.textContent = 'Registering...';
         }
       }
       
-      // Check if user needs to register
+      // Check if user needs to register (registerMPK will handle MPK generation internally)
       if (walletState.account && !walletState.isRegistered) {
-        console.log('Privacy mode enabled, but MPK not registered. Prompting registration...');
-        // Trigger registration flow
+        console.log('Privacy mode enabled, prompting registration...');
         window.dispatchEvent(new CustomEvent('register-mpk'));
       }
     } else {
@@ -482,9 +481,16 @@ class PrivacyWalletApp {
       if (privacyStatus) {
         const statusDot = privacyStatus.querySelector('.status-dot');
         const statusText = privacyStatus.querySelector('.status-text');
-        statusDot.classList.remove('registered');
-        statusDot.classList.add('unregistered');
-        statusText.textContent = 'Privacy disabled';
+        
+        if (walletState.isRegistered) {
+          statusDot.classList.remove('registered');
+          statusDot.classList.add('unregistered');
+          statusText.textContent = 'Not activated';
+        } else {
+          statusDot.classList.remove('registered');
+          statusDot.classList.add('unregistered');
+          statusText.textContent = 'Not registered';
+        }
       }
     }
   }
@@ -507,18 +513,18 @@ class PrivacyWalletApp {
     const convertActionBtn = document.getElementById('convert-action-btn');
     
     if (this.convertMode === 'shield') {
-      // Switch to Unshield mode
+      // Switch to Private to Public mode
       this.convertMode = 'unshield';
       if (convertActionBtn) {
-        convertActionBtn.textContent = 'Unshield';
+        convertActionBtn.textContent = 'Private to Public';
         convertActionBtn.classList.remove('shield');
         convertActionBtn.classList.add('unshield');
       }
     } else {
-      // Switch to Shield mode
+      // Switch to Public to Private mode
       this.convertMode = 'shield';
       if (convertActionBtn) {
-        convertActionBtn.textContent = 'Shield';
+        convertActionBtn.textContent = 'Public to Private';
         convertActionBtn.classList.remove('unshield');
         convertActionBtn.classList.add('shield');
       }

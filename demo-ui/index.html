@@ -37,7 +37,7 @@
               <span class="toggle-label-sidebar">🔐 Privacy Mode</span>
               <div class="privacy-status-inline" id="privacy-status">
                 <div class="status-dot unregistered"></div>
-                <span class="status-text">Not activated</span>
+                <span class="status-text">Not registered</span>
               </div>
             </div>
             <label class="privacy-toggle-sidebar">
@@ -82,7 +82,7 @@
             <button class="convert-quick-btn" id="convert-max-btn">MAX</button>
             <button class="convert-switch-btn" id="convert-switch-btn">⇄</button>
           </div>
-          <button class="convert-action-btn shield" id="convert-action-btn">Shield</button>
+          <button class="convert-action-btn shield" id="convert-action-btn">Public to Private</button>
         </div>
       </div>
 
@@ -213,11 +213,11 @@
     </aside>
   </main>
 
-  <!-- Shield Modal -->
+  <!-- Public to Private Modal -->
   <div class="modal" id="shield-modal">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>🛡️ Shield Assets</h3>
+        <h3>🔐 Public to Private</h3>
         <button class="modal-close" id="shield-modal-close">×</button>
       </div>
       <div class="modal-body">
@@ -228,8 +228,8 @@
           </div>
           <span class="flow-arrow">→</span>
           <div class="flow-step">
-            <div class="flow-icon shield-icon">🛡️</div>
-            <span class="flow-label">Shield</span>
+            <div class="flow-icon shield-icon">🔐</div>
+            <span class="flow-label">Encrypt</span>
           </div>
           <span class="flow-arrow">→</span>
           <div class="flow-step">
@@ -253,17 +253,17 @@
         </div>
 
         <button class="submit-btn shield" id="shield-btn">
-          🛡️ Shield to Private Balance
+          🔐 Public to Private
         </button>
       </div>
     </div>
   </div>
 
-  <!-- Unshield Modal -->
+  <!-- Private to Public Modal -->
   <div class="modal" id="unshield-modal">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>📤 Unshield Assets</h3>
+        <h3>💳 Private to Public</h3>
         <button class="modal-close" id="unshield-modal-close">×</button>
       </div>
       <div class="modal-body">
@@ -274,8 +274,8 @@
           </div>
           <span class="flow-arrow">→</span>
           <div class="flow-step">
-            <div class="flow-icon" style="background: var(--accent-orange-dim); color: var(--accent-orange);">📤</div>
-            <span class="flow-label">Unshield</span>
+            <div class="flow-icon" style="background: var(--accent-orange-dim); color: var(--accent-orange);">💳</div>
+            <span class="flow-label">Decrypt</span>
           </div>
           <span class="flow-arrow">→</span>
           <div class="flow-step">
@@ -299,7 +299,7 @@
         </div>
 
         <button class="submit-btn unshield" id="unshield-btn">
-          📤 Unshield to Public Address
+          💳 Private to Public
         </button>
       </div>
     </div>

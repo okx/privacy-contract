@@ -86,7 +86,7 @@ export function updateConnectButton(state) {
       const statusText = privacyStatus.querySelector('.status-text');
       const statusDot = privacyStatus.querySelector('.status-dot');
       if (statusText) {
-        statusText.textContent = 'Not activated';
+        statusText.textContent = 'Not registered';
       }
       if (statusDot) {
         statusDot.classList.remove('registered');
@@ -169,22 +169,27 @@ function updatePrivacyModeStatus(isRegistered) {
   if (!statusDot || !statusText) return;
   
   if (isRegistered) {
-    statusDot.classList.remove('unregistered');
-    statusDot.classList.add('registered');
-    
+    // User is registered
     if (privacyToggle && privacyToggle.checked) {
-      statusText.textContent = 'Privacy activated';
+      // Privacy mode ON
+      statusDot.classList.remove('unregistered');
+      statusDot.classList.add('registered');
+      statusText.textContent = 'Activated';
     } else {
-      statusText.textContent = 'Ready';
+      // Privacy mode OFF but registered - use red dot to indicate not activated
+      statusDot.classList.remove('registered');
+      statusDot.classList.add('unregistered');
+      statusText.textContent = 'Not activated';
     }
   } else {
+    // User is not registered
     statusDot.classList.remove('registered');
     statusDot.classList.add('unregistered');
     
     if (privacyToggle && privacyToggle.checked) {
-      statusText.textContent = 'Activating...';
+      statusText.textContent = 'Registering...';
     } else {
-      statusText.textContent = 'Not activated';
+      statusText.textContent = 'Not registered';
     }
   }
 }
@@ -264,12 +269,12 @@ export function updateShieldLookup(mpk, viewPubKey, isFound) {
         : viewPubKey;
       viewPubKeyEl.textContent = short;
     }
-    statusEl.textContent = '✓ Privacy activated';
+    statusEl.textContent = '✓ Registered';
     statusEl.className = 'lookup-status found';
   } else {
-    mpkEl.textContent = isFound === null ? 'Connect wallet...' : 'Privacy not activated';
+    mpkEl.textContent = isFound === null ? 'Connect wallet...' : 'Not registered';
     if (viewPubKeyEl) viewPubKeyEl.textContent = '—';
-    statusEl.textContent = isFound === null ? '—' : '✗ Privacy not activated';
+    statusEl.textContent = isFound === null ? '—' : '✗ Not registered';
     statusEl.className = isFound === null ? 'lookup-status' : 'lookup-status not-found';
   }
 }
@@ -289,15 +294,15 @@ export function updateTransferLookup(mpk, viewPubKey, isFound) {
     statusHint.textContent = 'Checking...';
     statusHint.className = 'status-hint';
   } else if (isFound && mpk) {
-    // Privacy activated
+    // Privacy registered
     statusDot.className = 'status-dot registered';
-    statusHint.textContent = 'Privacy activated ✓ → Private Transfer (fully private)';
+    statusHint.textContent = 'Registered ✓ → Private Transfer (fully private)';
     statusHint.className = 'status-hint found';
     recipientRegistered = true;
   } else if (isFound === false) {
-    // Privacy not activated - will use Unshield
+    // Privacy not registered - will use Private to Public
     statusDot.className = 'status-dot unregistered';
-    statusHint.textContent = 'Not activated → Recipient will receive in public balance';
+    statusHint.textContent = 'Not registered → Will send to public balance';
     statusHint.className = 'status-hint not-found';
     recipientRegistered = false;
   } else if (isFound === 'invalid') {
@@ -309,7 +314,7 @@ export function updateTransferLookup(mpk, viewPubKey, isFound) {
   } else {
     // Reset state
     statusDot.className = 'status-dot';
-    statusHint.textContent = 'Enter address to check';
+    statusHint.textContent = 'Checking recipient status...';
     statusHint.className = 'status-hint';
     recipientRegistered = null;
   }
@@ -543,11 +548,11 @@ export function setButtonLoading(selector, isLoading, loadingText = 'Loading...'
     if (selector === '#convert-action-btn') {
       // Don't use saved text, determine from class
       if (btn.classList.contains('shield')) {
-        btn.textContent = 'Shield';
+        btn.textContent = 'Public to Private';
       } else if (btn.classList.contains('unshield')) {
-        btn.textContent = 'Unshield';
+        btn.textContent = 'Private to Public';
       } else {
-        btn.textContent = btn.dataset.originalText || 'Shield';
+        btn.textContent = btn.dataset.originalText || 'Public to Private';
       }
     } else {
       btn.textContent = btn.dataset.originalText || btn.textContent;
