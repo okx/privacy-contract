@@ -7,7 +7,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RAPIDSNARK_DIR="${SCRIPT_DIR}/tmp/rapidsnark"
+
+# Load .env file first (before setting defaults)
+if [ -f "${SCRIPT_DIR}/.env" ]; then
+    export $(grep -v '^#' "${SCRIPT_DIR}/.env" | xargs)
+fi
+
+# Use RAPIDSNARK_DIR from .env, or default to tmp/rapidsnark
+RAPIDSNARK_DIR="${RAPIDSNARK_DIR:-${SCRIPT_DIR}/tmp/rapidsnark}"
 RAPIDSNARK_REPO="https://github.com/okx/rapidsnark.git"
 RAPIDSNARK_BRANCH="cliff/dev/railgun_circuit"
 
@@ -62,21 +69,14 @@ check_dependencies() {
         missing_deps+=("npm")
     fi
 
-    # Check circom
-    if ! command -v circom &> /dev/null; then
-        log_warn "circom not found. Installing via cargo..."
-        if ! command -v cargo &> /dev/null; then
-            log_error "Rust/Cargo is required to install circom."
-            log_error "Install from https://rustup.rs"
-            exit 1
-        fi
-        log_info "Installing circom..."
-        git clone https://github.com/iden3/circom.git /tmp/circom
-        cd /tmp/circom
-        cargo build --release
-        cargo install --path circom
-        cd -
-        rm -rf /tmp/circom
+    # Check circom (use CIRCOM_BIN_PATH from .env)
+    if [ -n "$CIRCOM_BIN_PATH" ] && [ -f "$CIRCOM_BIN_PATH" ]; then
+        log_info "Using circom from CIRCOM_BIN_PATH: $CIRCOM_BIN_PATH"
+    elif command -v circom &> /dev/null; then
+        log_info "Using circom from PATH: $(which circom)"
+    else
+        log_error "circom not found. Set CIRCOM_BIN_PATH in .env or install circom to PATH."
+        exit 1
     fi
 
     # Check platform-specific dependencies
@@ -157,97 +157,58 @@ build_prover_server() {
         fi
     fi
 
-    if [[ "$(uname)" == "Darwin" ]] && [[ "$(uname -m)" == "arm64" ]]; then
-        # macOS ARM64 build
-        mkdir -p build_prover_macos_arm64 && cd build_prover_macos_arm64
-        cmake .. -DTARGET_PLATFORM=macos_arm64 \
-                 -DBUILD_SERVER=ON \
-                 -DLIB_EVENT_DIR=/opt/homebrew/opt/libevent/lib \
-                 -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr/local \
-                 -DUSE_OPENMP=ON \
-                 -DLIB_OMP_PREFIX=/opt/homebrew/opt/libomp/ \
-                 -DGMP_INCLUDE_DIR=/opt/homebrew/include \
-                 -DGMP_LIB_DIR=/opt/homebrew/lib \
-                 -DUSE_LOGGER=ON
-        make -j$(sysctl -n hw.ncpu)
-        sudo make install
-        cd ..
-    elif [[ "$(uname)" == "Darwin" ]]; then
-        # macOS x86_64 build
-        mkdir -p build_prover_macos_x86_64 && cd build_prover_macos_x86_64
-        cmake .. -DTARGET_PLATFORM=macos_x86_64 \
-                 -DBUILD_SERVER=ON \
-                 -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr/local
-        make -j$(sysctl -n hw.ncpu)
-        sudo make install
-        cd ..
-    else
-        # Linux build
-        mkdir -p build_prover && cd build_prover
-        cmake .. -DBUILD_SERVER=ON \
-                 -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr/local
-        make -j$(nproc)
-        sudo make install
-        cd ..
-    fi
+    make prover-server
+
+    log_info "Installing proverServer to /usr/local/bin..."
+    sudo cp "${RAPIDSNARK_DIR}/package/bin/proverServer" /usr/local/bin/
 
     log_info "Prover server installed at /usr/local/bin/proverServer"
 }
 
 # ============ Build Circuit ============
 build_circuit() {
-    log_info "Building circuit..."
+    log_info "Building circuit (witness generator)..."
     cd "$RAPIDSNARK_DIR"
 
-    # Install npm dependencies
+    # Install npm dependencies (needed for snarkjs in witness generator)
     log_info "Installing npm dependencies..."
     npm install
 
-    # Build circuit
+    # Call rapidsnark's build_circuit.sh (uses LOCAL_CIRCUITS_PATH and CIRCOM_BIN_PATH from env)
     ./build_circuit.sh
 }
 
 # ============ Setup ZKey ============
 setup_zkey() {
     log_info "Setting up zkey..."
-    cd "$RAPIDSNARK_DIR"
 
-    # Check if zkey already exists
-    if [ -f "zkeys/02x03.zkey" ]; then
-        log_info "zkey already exists, verifying..."
-        if npx snarkjs zkey verify build/02x03.r1cs zkeys/02x03.zkey 2>/dev/null; then
-            log_info "Existing zkey is valid"
-            return
-        else
-            log_warn "Existing zkey is invalid, regenerating..."
-        fi
+    # Verify LOCAL_CIRCUITS_PATH is set
+    if [ -z "$LOCAL_CIRCUITS_PATH" ]; then
+        log_error "LOCAL_CIRCUITS_PATH is not set. Please set it in .env file."
+        exit 1
     fi
 
-    mkdir -p zkeys
-
-    # Download powers of tau if not exists
-    if [ ! -f "powersOfTau28_hez_final_15.ptau" ]; then
-        log_info "Downloading powers of tau..."
-        curl -L -o powersOfTau28_hez_final_15.ptau \
-            https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau
+    if [ ! -d "$LOCAL_CIRCUITS_PATH" ]; then
+        log_error "LOCAL_CIRCUITS_PATH does not exist: $LOCAL_CIRCUITS_PATH"
+        exit 1
     fi
 
-    # Generate zkey
-    log_info "Generating zkey (this may take a moment)..."
-    npx snarkjs groth16 setup build/02x03.r1cs powersOfTau28_hez_final_15.ptau zkeys/02x03_new.zkey
+    # Link zkey from LOCAL_CIRCUITS_PATH
+    log_info "Linking zkey from $LOCAL_CIRCUITS_PATH..."
+    mkdir -p "${RAPIDSNARK_DIR}/zkeys"
 
-    # Export verification key
-    log_info "Exporting verification key..."
-    npx snarkjs zkey export verificationkey zkeys/02x03_new.zkey zkeys/02x03.vkey.json
-
-    # Replace old zkey
-    if [ -f "zkeys/02x03.zkey" ]; then
-        mv zkeys/02x03.zkey zkeys/02x03_old.zkey
+    if [ -f "${LOCAL_CIRCUITS_PATH}/zkeys/02x03.zkey" ]; then
+        ln -sf "${LOCAL_CIRCUITS_PATH}/zkeys/02x03.zkey" "${RAPIDSNARK_DIR}/zkeys/02x03.zkey"
+        log_info "Linked 02x03.zkey"
+    else
+        log_error "zkey not found at ${LOCAL_CIRCUITS_PATH}/zkeys/02x03.zkey"
+        exit 1
     fi
-    mv zkeys/02x03_new.zkey zkeys/02x03.zkey
+
+    if [ -f "${LOCAL_CIRCUITS_PATH}/zkeys/02x03.vkey.json" ]; then
+        ln -sf "${LOCAL_CIRCUITS_PATH}/zkeys/02x03.vkey.json" "${RAPIDSNARK_DIR}/zkeys/02x03.vkey.json"
+        log_info "Linked 02x03.vkey.json"
+    fi
 
     log_info "zkey setup complete!"
 }
@@ -259,23 +220,23 @@ launch_server() {
 
     if [ ! -f "/usr/local/bin/proverServer" ]; then
         log_error "proverServer not found at /usr/local/bin/proverServer"
-        log_error "Please run setup first: $0 setup"
+        log_error "Please run build first: $0 build"
         exit 1
     fi
 
     if [ ! -f "zkeys/02x03.zkey" ]; then
         log_error "zkey not found at $RAPIDSNARK_DIR/zkeys/02x03.zkey"
-        log_error "Please run setup first: $0 setup"
+        log_error "Please run build first: $0 build"
         exit 1
     fi
 
     # Set library path for dynamic libraries
     if [[ "$(uname)" == "Darwin" ]] && [[ "$(uname -m)" == "arm64" ]]; then
-        export DYLD_LIBRARY_PATH="${RAPIDSNARK_DIR}/build_prover_macos_arm64/src:${DYLD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="${RAPIDSNARK_DIR}/build_prover_server_macos_arm64/src:${DYLD_LIBRARY_PATH}"
     elif [[ "$(uname)" == "Darwin" ]]; then
-        export DYLD_LIBRARY_PATH="${RAPIDSNARK_DIR}/build_prover_macos_x86_64/src:${DYLD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="${RAPIDSNARK_DIR}/build_prover_server_macos_x86_64/src:${DYLD_LIBRARY_PATH}"
     else
-        export LD_LIBRARY_PATH="${RAPIDSNARK_DIR}/build_prover/src:${LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="${RAPIDSNARK_DIR}/build_prover_server_linux_x86_64/src:${LD_LIBRARY_PATH}"
     fi
 
     log_info "Starting proverServer on port 8080..."
@@ -307,7 +268,7 @@ print_usage() {
     echo "  RAPIDSNARK_SERVER_URL=http://localhost:8080"
     echo "  RAPIDSNARK_CIRCUIT=02x03"
     echo "  USE_LOCAL_CIRCUITS=true"
-    echo "  LOCAL_CIRCUITS_PATH=$RAPIDSNARK_DIR"
+    echo "  LOCAL_CIRCUITS_PATH=$LOCAL_CIRCUITS_PATH"
     echo ""
     echo "Then redeploy contracts and run demo:"
     echo ""
@@ -323,7 +284,7 @@ print_help() {
     echo "Commands:"
     echo "  setup     Run full setup (clone, build, configure)"
     echo "  launch    Launch the prover server"
-    echo "  build     Build only (pistache, prover server, circuit, zkey)"
+    echo "  build     Build only (pistache, prover server, witness generator, link zkey)"
     echo "  help      Show this help message"
     echo ""
     echo "If no command is given, 'build' is run by default."

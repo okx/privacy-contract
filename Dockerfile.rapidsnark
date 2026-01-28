@@ -1,0 +1,36 @@
+FROM ubuntu:22.04
+
+ARG RAPIDSNARK_REPO=https://github.com/okx/rapidsnark.git
+ARG RAPIDSNARK_BRANCH=cliff/dev/railgun_circuit
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        libevent-dev \
+        libgmp-dev \
+        libsodium-dev \
+        nasm \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/rapidsnark
+
+RUN git clone -b ${RAPIDSNARK_BRANCH} ${RAPIDSNARK_REPO} . \
+    && git submodule update --init
+
+RUN ./build_pistache.sh \
+    && make prover-server \
+    && cp package/bin/proverServer /usr/local/bin/proverServer
+
+ENV RAPIDSNARK_CIRCUIT=02x03
+
+EXPOSE 8080
+VOLUME ["/data/zkeys"]
+
+CMD ["/bin/bash", "-lc", "/usr/local/bin/proverServer 8080 /data/zkeys/${RAPIDSNARK_CIRCUIT}.zkey"]

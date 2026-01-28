@@ -2,6 +2,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROVER_SERVER_PID=""
+PROVER_SERVER_CONTAINER=""
 
 # Copy .env.demo to .env if .env does not exist
 [ ! -f ".env" ] && cp .env.example .env
@@ -21,6 +22,9 @@ setup_rapidsnark() {
         server)
             setup_rapidsnark_server
             ;;
+        docker)
+            setup_rapidsnark_docker
+            ;;
         remote)
             setup_rapidsnark_remote
             ;;
@@ -28,7 +32,7 @@ setup_rapidsnark() {
             setup_rapidsnark_local
             ;;
         *)
-            echo "Unknown RAPIDSNARK_MODE: $RAPIDSNARK_MODE (expected: server, remote, or local)"
+            echo "Unknown RAPIDSNARK_MODE: $RAPIDSNARK_MODE (expected: server, docker, remote, or local)"
             exit 1
             ;;
     esac
@@ -49,7 +53,7 @@ setup_rapidsnark_server() {
 
     echo "Rapidsnark server not running at ${SERVER_URL}"
 
-    RAPIDSNARK_DIR="${SCRIPT_DIR}/tmp/rapidsnark"
+    RAPIDSNARK_DIR="${RAPIDSNARK_DIR:-${SCRIPT_DIR}/tmp/rapidsnark}"
 
     # Check if rapidsnark repo exists
     if [ ! -d "$RAPIDSNARK_DIR" ]; then
@@ -80,6 +84,79 @@ setup_rapidsnark_server() {
     for i in {1..30}; do
         if curl -s "${SERVER_URL}/status" > /dev/null 2>&1; then
             echo "Rapidsnark server ready at ${SERVER_URL}"
+            return
+        fi
+        sleep 1
+    done
+
+    echo "Warning: Server may not be ready yet, continuing anyway..."
+}
+
+# Setup rapidsnark in docker mode
+setup_rapidsnark_docker() {
+    echo "Rapidsnark mode: docker"
+
+    if ! command -v docker > /dev/null 2>&1; then
+        echo "docker not found. Please install Docker and ensure it is running."
+        exit 1
+    fi
+
+    local server_port="${RAPIDSNARK_DOCKER_PORT:-8080}"
+    local server_url="${RAPIDSNARK_SERVER_URL:-http://localhost:${server_port}}"
+    local image_name="${RAPIDSNARK_DOCKER_IMAGE:-rapidsnark-prover:local}"
+    local container_name="${RAPIDSNARK_DOCKER_CONTAINER:-rapidsnark-prover}"
+    local circuit="${RAPIDSNARK_CIRCUIT:-02x03}"
+
+    local zkey_dir=""
+    if [ -n "$RAPIDSNARK_DOCKER_ZKEY_DIR" ] && [ -d "$RAPIDSNARK_DOCKER_ZKEY_DIR" ]; then
+        zkey_dir="$RAPIDSNARK_DOCKER_ZKEY_DIR"
+    elif [ -n "$LOCAL_CIRCUITS_PATH" ] && [ -d "${LOCAL_CIRCUITS_PATH}/zkeys" ]; then
+        zkey_dir="${LOCAL_CIRCUITS_PATH}/zkeys"
+    elif [ -n "$RAPIDSNARK_DIR" ] && [ -d "${RAPIDSNARK_DIR}/zkeys" ]; then
+        zkey_dir="${RAPIDSNARK_DIR}/zkeys"
+    fi
+
+    if [ -z "$zkey_dir" ]; then
+        echo "zkey directory not found. Set RAPIDSNARK_DOCKER_ZKEY_DIR or LOCAL_CIRCUITS_PATH."
+        exit 1
+    fi
+
+    if [ ! -f "${zkey_dir}/${circuit}.zkey" ]; then
+        echo "zkey not found at ${zkey_dir}/${circuit}.zkey"
+        exit 1
+    fi
+
+    # Build image if missing or explicitly requested
+    if ! docker image inspect "$image_name" > /dev/null 2>&1 || [ "$RAPIDSNARK_DOCKER_BUILD" = "true" ]; then
+        echo "Building docker image ${image_name}..."
+        docker build -t "$image_name" -f "${SCRIPT_DIR}/Dockerfile.rapidsnark" "${SCRIPT_DIR}"
+    fi
+
+    # If container already running, reuse it
+    if docker ps --filter "name=^/${container_name}$" --format '{{.Names}}' | grep -q "^${container_name}$"; then
+        echo "Rapidsnark docker container already running: ${container_name}"
+        return
+    fi
+
+    # Remove stopped container if exists
+    if docker ps -a --filter "name=^/${container_name}$" --format '{{.Names}}' | grep -q "^${container_name}$"; then
+        docker rm "${container_name}" > /dev/null
+    fi
+
+    echo "Starting rapidsnark docker container..."
+    docker run -d \
+        --name "${container_name}" \
+        -p "${server_port}:8080" \
+        -e "RAPIDSNARK_CIRCUIT=${circuit}" \
+        -v "${zkey_dir}:/data/zkeys:ro" \
+        "${image_name}" > /dev/null
+    PROVER_SERVER_CONTAINER="${container_name}"
+
+    # Wait for server to be ready
+    echo "Waiting for server to start..."
+    for i in {1..30}; do
+        if curl -s "${server_url}/status" > /dev/null 2>&1; then
+            echo "Rapidsnark server ready at ${server_url}"
             return
         fi
         sleep 1
@@ -199,8 +276,8 @@ if [ "$USE_LOCAL_CIRCUITS" = "true" ]; then
         npm install
         "${SCRIPT_DIR}/build_circuit.sh"
         popd > /dev/null
-    elif [ -d "${SCRIPT_DIR}/tmp/rapidsnark" ]; then
-        echo "Using local circuits from ${SCRIPT_DIR}/tmp/rapidsnark"
+    elif [ -n "$RAPIDSNARK_DIR" ] && [ -d "$RAPIDSNARK_DIR" ]; then
+        echo "Using local circuits from ${RAPIDSNARK_DIR}"
     fi
 fi
 
@@ -217,6 +294,10 @@ cleanup() {
     kill $HARDHAT_PID 2>/dev/null || true
     if [ -n "$PROVER_SERVER_PID" ]; then
         kill $PROVER_SERVER_PID 2>/dev/null || true
+    fi
+    if [ -n "$PROVER_SERVER_CONTAINER" ]; then
+        docker stop "$PROVER_SERVER_CONTAINER" > /dev/null 2>&1 || true
+        docker rm "$PROVER_SERVER_CONTAINER" > /dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
