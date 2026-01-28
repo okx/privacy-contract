@@ -187,6 +187,7 @@ export async function connectWallet() {
     
     await initializeRailgunWallet();
     loadTransactions();
+    await checkRegistrationStatus();  // Check registration and auto-enable privacy mode if registered
     await refreshBalances();
     updateUI();
     
