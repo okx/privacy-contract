@@ -8,15 +8,54 @@ import { arrayToHexString } from '../helpers/global/bytes';
 import { MerkleTree } from '../helpers/logic/merkletree';
 import { transact, UnshieldType } from '../helpers/logic/transaction';
 
+/** Must match Commitments.sol ROOT_HISTORY_SIZE (lazy root: proof uses next slot) */
+const ROOT_HISTORY_SIZE = 600;
+
+/**
+ * Resolve proof root index: if chain root at currentIndex matches local root, use currentIndex;
+ * else if chain getRoot() matches local root (lazy update pending), use (currentIndex+1) % ROOT_HISTORY_SIZE.
+ */
+async function resolveProofRootIndex(
+  railgun: { getCurrentRootIndex: () => Promise<any>; roots: (i: number) => Promise<string>; getRoot: () => Promise<string> },
+  merkletree: MerkleTree,
+  logPrefix: string
+): Promise<number> {
+  const chainRootIndex = await railgun.getCurrentRootIndex();
+  const chainIndexNum = Number(chainRootIndex);
+  const rootAtChainIndex = await railgun.roots(chainIndexNum);
+  const localRootHex = arrayToHexString(merkletree.root, true);
+
+  if (rootAtChainIndex.toLowerCase() === localRootHex.toLowerCase()) {
+    console.log(`📦 [${logPrefix}] chainRootIndex=${chainIndexNum} matches local root → proof rootIndex=${chainIndexNum}`);
+    return chainIndexNum;
+  }
+
+  const chainCurrentRoot = await railgun.getRoot();
+  if (chainCurrentRoot.toLowerCase() === localRootHex.toLowerCase()) {
+    const proofIndex = (chainIndexNum + 1) % ROOT_HISTORY_SIZE;
+    console.log(`📦 [${logPrefix}] chain getRoot() matches local (lazy) → proof rootIndex=${proofIndex} (chainIndex was ${chainIndexNum})`);
+    return proofIndex;
+  }
+
+  throw new Error(
+    `Local root does not match chain: local=${localRootHex} roots(${chainIndexNum})=${rootAtChainIndex} getRoot()=${chainCurrentRoot}`
+  );
+}
+
 /**
  * Log gas used information from transaction receipt
  */
 function logGasUsed(receipt: any, transactionName: string): string {
   const gasUsed = receipt.gasUsed;
-  
   console.log(`\n⛽ ${transactionName} Gas Used: ${gasUsed.toString()}`);
-  
   return gasUsed.toString();
+}
+
+/**
+ * Log transaction hash and block number for debugging (e.g. same-block root timing)
+ */
+function logTxBlock(receipt: any, transactionName: string): void {
+  console.log(`📦 [${transactionName}] blockNumber=${receipt.blockNumber} txHash=${receipt.transactionHash}`);
 }
 
 /**
@@ -288,8 +327,7 @@ async function main() {
     signatures
   );
   const shieldReceipt = await shieldTx.wait();
-  console.log('Shield transaction hash:', shieldReceipt.transactionHash);
-  console.log('Shield block number:', shieldReceipt.blockNumber);
+  logTxBlock(shieldReceipt, 'DelegateShield');
   const shieldGasUsed = logGasUsed(shieldReceipt, 'DelegateShield');
 
   // ========== (Optional) Query Shield Events ==========
@@ -346,8 +384,10 @@ async function main() {
   console.log('Transfer inputs:', inputNotes.length);
   console.log('Transfer outputs:', outputNotes.length);
 
-  // 2.4 Get root index for the transaction
-  const rootIndex = await railgun.getCurrentRootIndex();
+  // 2.4 Get root index: chain roots(chainIndex) vs local root; if lazy, chain getRoot() vs local → index+1
+  const blockAtRootQuery = await ethers.provider.getBlockNumber();
+  const rootIndex = await resolveProofRootIndex(railgun, merkletree, 'before Transfer');
+  console.log(`📦 [before Transfer] blockNumber=${blockAtRootQuery} (shield was in block ${shieldReceipt.blockNumber})`);
 
   // 2.5 Prepare actionData
   const actionData = {
@@ -394,8 +434,7 @@ async function main() {
     { gasLimit: 5000000 }
   );
   const relayReceipt = await transferTx.wait();
-  console.log('Relay transaction hash:', relayReceipt.transactionHash);
-  console.log('Relay block number:', relayReceipt.blockNumber);
+  logTxBlock(relayReceipt, 'Relay (Transfer)');
   const transferGasUsed = logGasUsed(relayReceipt, 'Relay (Transfer)');
 
   // 2.7 Scan transfer transaction
@@ -444,8 +483,10 @@ async function main() {
   );
   console.log('unshieldAdaptParams:', ethers.utils.hexlify(unshieldAdaptParams));
 
-  // 3.3 Get root index for unshield transaction
-  const unshieldRootIndex = await railgun.getCurrentRootIndex();
+  // 3.3 Get root index: chain roots(chainIndex) vs local root; if lazy, chain getRoot() vs local → index+1
+  const blockAtUnshieldRootQuery = await ethers.provider.getBlockNumber();
+  const unshieldRootIndex = await resolveProofRootIndex(railgun, merkletree, 'before Unshield');
+  console.log(`📦 [before Unshield] blockNumber=${blockAtUnshieldRootQuery}`);
 
   // 3.4 Generate SNARK proof with correct adaptParams
   console.log('Generating SNARK proof for unshield...');
@@ -473,8 +514,7 @@ async function main() {
     { gasLimit: 5000000 }
   );
   const unshieldReceipt = await unshieldTx.wait();
-  console.log('Unshield transaction hash:', unshieldReceipt.transactionHash);
-  console.log('Unshield block number:', unshieldReceipt.blockNumber);
+  logTxBlock(unshieldReceipt, 'Relay (Unshield)');
   const unshieldGasUsed = logGasUsed(unshieldReceipt, 'Relay (Unshield)');
 
   // 3.5 Check token balance of user

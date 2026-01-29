@@ -22,6 +22,9 @@ import {
   hexStringToArray,
 } from '../../helpers/global/bytes';
 
+/** Must match Commitments.sol ROOT_HISTORY_SIZE (lazy root: proof uses next slot) */
+const ROOT_HISTORY_SIZE = 600;
+
 describe('Adapt/Relay', () => {
   /**
    * Deploy fixtures
@@ -334,7 +337,7 @@ describe('Adapt/Relay', () => {
 
     // No additions to the merkle tree should have been made
     expect(await railgunSmartWallet.nextLeafIndex()).to.equal(0);
-    expect(await railgunSmartWallet.merkleRoot()).to.equal(arrayToHexString(merkletree.root, true));
+    expect(await railgunSmartWallet.getRoot()).to.equal(arrayToHexString(merkletree.root, true));
 
     // Transfer tokens to contract
     await testERC20Tokens[1].mint(relayAdapt.address, 10n ** 18n);
@@ -362,9 +365,9 @@ describe('Adapt/Relay', () => {
     // Only non no-op tokens should be shielded
     await merkletree.insertLeaves([await depositNote2.getHash()], 0);
 
-    // Check only non no-op tokens were added to tree
+    // Check only non no-op tokens were added to tree (getRoot: lazy update doesn't write merkleRoot until updateRoot())
     expect(await railgunSmartWallet.nextLeafIndex()).to.equal(1);
-    expect(await railgunSmartWallet.merkleRoot()).to.equal(arrayToHexString(merkletree.root, true));
+    expect(await railgunSmartWallet.getRoot()).to.equal(arrayToHexString(merkletree.root, true));
   });
 
   it('Should deposit ERC721', async () => {
@@ -817,8 +820,9 @@ describe('Adapt/Relay', () => {
     await merkletree.scanTX(depositTX, railgunSmartWallet);
     await wallet.scanTX(depositTX, railgunSmartWallet);
 
-    // Get current root index after shield
-    const currentRootIndex = await railgunSmartWallet.getCurrentRootIndex();
+    // Get current root index after shield (lazy root: chain index is old, next transact writes our root at index+1)
+    const chainRootIndex = await railgunSmartWallet.getCurrentRootIndex();
+    const proofRootIndex = (Number(chainRootIndex) + 1) % ROOT_HISTORY_SIZE;
 
     // Generate transaction bundle and actions
     const notesInOut = await wallet.getTestTransactionInputs(
@@ -849,7 +853,7 @@ describe('Adapt/Relay', () => {
     const transactionsWrongAdaptID = [
       await dummyTransact(
         merkletree,
-        currentRootIndex, // Use current root index after shield
+        proofRootIndex,
         0n,
         UnshieldType.NONE,
         chainID,
@@ -860,7 +864,7 @@ describe('Adapt/Relay', () => {
       ),
     ];
 
-    const transactions = await transactWithAdaptParams(merkletree, currentRootIndex, actionData, [ // Use current root index after shield
+    const transactions = await transactWithAdaptParams(merkletree, proofRootIndex, actionData, [
       {
         minGasPrice: 0n,
         unshield: UnshieldType.NONE,
@@ -890,8 +894,9 @@ describe('Adapt/Relay', () => {
     await merkletree.scanTX(relayTX, railgunSmartWallet);
     await wallet.scanTX(relayTX, railgunSmartWallet);
 
-    // Get current root index after relay transaction
-    const currentRootIndexAfterRelay = await railgunSmartWallet.getCurrentRootIndex();
+    // Get current root index after relay (lazy root: relay added leaves, next transact writes at index+1)
+    const chainRootIndexAfterRelay = await railgunSmartWallet.getCurrentRootIndex();
+    const proofRootIndexAfterRelay = (Number(chainRootIndexAfterRelay) + 1) % ROOT_HISTORY_SIZE;
 
     // Verification bypass address shouldn't revert
     // Generate transaction bundle and actions
@@ -915,7 +920,7 @@ describe('Adapt/Relay', () => {
     const transactionsSnarkBypass = [
       await dummyTransact(
         merkletree,
-        currentRootIndexAfterRelay, // Use current root index after relay
+        proofRootIndexAfterRelay,
         0n,
         UnshieldType.NONE,
         chainID,

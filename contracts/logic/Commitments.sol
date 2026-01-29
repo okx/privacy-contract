@@ -242,10 +242,11 @@ contract Commitments is Initializable {
       return;
     }
 
-    // Create new tree if current one can't contain new leaves
-    if ((nextLeafIndex + count) > (2 ** TREE_DEPTH)) {
-      newTree();
-    }
+    // Single tree: require capacity (no newTree in sliding-window implementation)
+    require(
+      (nextLeafIndex + count) <= (2 ** TREE_DEPTH),
+      "Commitments: Tree capacity exceeded"
+    );
 
     // Update filledSubTrees at each level (similar to Polygon's _branch update)
     for (uint256 height = 0; height < TREE_DEPTH; height++) {
@@ -287,17 +288,21 @@ contract Commitments is Initializable {
 * @dev Uses filledSubTrees and nextLeafIndex to calculate root, no need for leaf hashes
 * This is similar to Polygon's getRoot() which calculates root from _branch and depositCount
 */
-function updateRoot() public {
+  function updateRoot() public {
     if (isRootUpdated) {
-        return;
+      return;
     }
     // Update root and history
     merkleRoot = getRoot();
-    rootHistory[treeNumber][merkleRoot] = true;
+    _addRootToHistory(merkleRoot);
     isRootUpdated = true;
-}
+  }
 
-function getRoot() public view returns (bytes32) {
+  /**
+   * @notice Calculate root from filledSubTrees (similar to Polygon's getRoot)
+   * @dev Uses filledSubTrees and nextLeafIndex; no leaf hashes needed
+   */
+  function getRoot() public view returns (bytes32) {
     if (nextLeafIndex == 0) {
       return merkleRoot;
     }
