@@ -55,7 +55,7 @@ contract RailgunSmartWallet is RailgunLogic {
     emit Shield(insertionTreeNumber, insertionStartIndex, commitments, shieldCiphertext, fees);
 
     // Push new commitments to merkle tree
-    Commitments.insertLeaves(insertionLeaves);
+    Commitments.addLeaves(insertionLeaves);
 
     // Store block number of last event for easier sync
     RailgunLogic.lastEventBlock = block.number;
@@ -66,6 +66,10 @@ contract RailgunSmartWallet is RailgunLogic {
    * @param _transactions - Transactions to execute
    */
   function transact(Transaction[] calldata _transactions) external {
+    if (!isRootUpdated && lastEventBlock < block.number) {
+      Commitments.updateRoot();
+    }
+
     uint256 commitmentsCount = RailgunLogic.sumCommitments(_transactions);
 
     // Create accumulators
@@ -124,7 +128,7 @@ contract RailgunSmartWallet is RailgunLogic {
     }
 
     // Push commitments to tree after events due to insertLeaves causing side effects
-    Commitments.insertLeaves(commitments);
+    Commitments.addLeaves(commitments);
 
     // Store block number of last event for easier sync
     RailgunLogic.lastEventBlock = block.number;
