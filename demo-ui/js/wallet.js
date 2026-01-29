@@ -1,9 +1,12 @@
-// Wallet Management Module
+// Wallet Management Module - Refactored
+
 import { CONFIG, contracts, erc20TokenInfo, loadContractConfig as loadConfig } from './config.js';
 import { ensureEthers, getMetaMaskProvider, storage } from './utils.js';
+import { TX_TYPES, TX_LABELS, TX_ICONS } from './constants.js';
 import * as UI from './ui.js';
 
-// Wallet State (encapsulated)
+// ==================== Wallet State ====================
+
 class WalletState {
   constructor() {
     this.provider = null;
@@ -34,17 +37,88 @@ class WalletState {
     this.mpk = null;
     this.isRegistered = false;
     this.railgunWallet = null;
+    clearKeysFromState();
   }
 }
 
 export const state = new WalletState();
 
-// Initialize RailgunWalletBrowser
+// ==================== State Management ====================
+
+/**
+ * Clear keys from state
+ */
+function clearKeysFromState() {
+  state.derivedKeys.spendingKey = null;
+  state.derivedKeys.viewingKey = null;
+  state.derivedKeys.viewingPublicKey = null;
+  state.mpk = null;
+}
+
+/**
+ * Clear account-specific state (called when switching accounts)
+ */
+function clearAccountState() {
+  clearKeysFromState();
+  state.publicBalance = '0.00';
+  state.privateBalance = '0.00';
+  state.mpk = null;
+  state.isRegistered = false;
+}
+
+/**
+ * Load keys from raw key data to state
+ */
+async function loadKeysToState(keys) {
+  const ethersLib = ensureEthers();
+  
+  state.derivedKeys.viewingPublicKey = await state.railgunWallet.getViewingPublicKey(keys.viewingKey);
+  const mpkBytes = await state.railgunWallet.getMPK(keys.spendingKey, keys.viewingKey);
+  state.mpk = ethersLib.utils.hexlify(mpkBytes);
+  
+  const spendingKeyArray = ethersLib.utils.arrayify('0x' + keys.spendingKey);
+  const viewingKeyArray = ethersLib.utils.arrayify('0x' + keys.viewingKey);
+  
+  state.derivedKeys.spendingKey = spendingKeyArray;
+  state.derivedKeys.viewingKey = viewingKeyArray;
+}
+
+/**
+ * Ensure keys are loaded from storage
+ */
+async function ensureKeysLoaded() {
+  // Already in state
+  if (state.derivedKeys.spendingKey && state.derivedKeys.viewingKey) {
+    return true;
+  }
+  
+  // Try loading from storage
+  const savedKeys = await state.railgunWallet.loadKeys(state.account);
+  
+  if (savedKeys && savedKeys.spendingKey && savedKeys.viewingKey) {
+    console.log('✅ Loading keys from storage');
+    await loadKeysToState(savedKeys);
+    return true;
+  }
+  
+  return false;
+}
+
+// ==================== Initialization ====================
+
 async function initializeRailgunWallet() {
   const { RailgunWalletBrowser } = window.RailgunWallet;
   state.railgunWallet = new RailgunWalletBrowser();
   
-  const providerAdapter = {
+  const providerAdapter = createProviderAdapter();
+  const contractAdapter = createContractAdapter();
+  
+  await state.railgunWallet.initialize(providerAdapter, contractAdapter);
+  state.railgunWallet.setCurrentAccount(state.account);
+}
+
+function createProviderAdapter() {
+  return {
     getNetwork: async () => ({ chainId: state.chainId }),
     getTransactionReceipt: async (txHash) => {
       const receipt = await state.provider.getTransactionReceipt(txHash);
@@ -57,23 +131,23 @@ async function initializeRailgunWallet() {
       };
     }
   };
-  
-  const contractAdapter = {
+}
+
+function createContractAdapter() {
+  const ethersLib = ensureEthers();
+  return {
     address: contracts.railgun,
     interface: {
       parseLog: (log) => {
-        const ethersLib = ensureEthers();
         const iface = new ethersLib.utils.Interface(CONFIG.RAILGUN_ABI);
         return iface.parseLog(log);
       }
     }
   };
-  
-  await state.railgunWallet.initialize(providerAdapter, contractAdapter);
-  state.railgunWallet.setCurrentAccount(state.account);
 }
 
-// Chain detection and validation
+// ==================== Network Management ====================
+
 async function switchToTargetChain(provider) {
   const currentChainIdHex = await provider.request({ method: 'eth_chainId' });
   const currentChainId = parseInt(currentChainIdHex, 16);
@@ -92,7 +166,8 @@ async function switchToTargetChain(provider) {
   console.log('✅ Network matched!');
 }
 
-// Load ERC20 token info
+// ==================== Token Info ====================
+
 export async function loadERC20TokenInfo() {
   if (contracts.testERC20 && contracts.testERC20 !== '0x0000000000000000000000000000000000000000') {
     erc20TokenInfo.address = contracts.testERC20;
@@ -108,23 +183,9 @@ export async function loadERC20TokenInfo() {
   try {
     const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
     
-    try {
-      erc20TokenInfo.symbol = await erc20.symbol();
-    } catch (e) {
-      // Use default
-    }
-    
-    try {
-      erc20TokenInfo.name = await erc20.name();
-    } catch (e) {
-      // Use default
-    }
-    
-    try {
-      erc20TokenInfo.decimals = await erc20.decimals();
-    } catch (e) {
-      // Use default
-    }
+    try { erc20TokenInfo.symbol = await erc20.symbol(); } catch (e) { /* Use default */ }
+    try { erc20TokenInfo.name = await erc20.name(); } catch (e) { /* Use default */ }
+    try { erc20TokenInfo.decimals = await erc20.decimals(); } catch (e) { /* Use default */ }
     
     UI.updateERC20TokenDisplay();
   } catch (error) {
@@ -132,7 +193,8 @@ export async function loadERC20TokenInfo() {
   }
 }
 
-// Connect wallet
+// ==================== Wallet Connection ====================
+
 export async function connectWallet() {
   if (state.isConnecting) return;
   state.isConnecting = true;
@@ -149,81 +211,124 @@ export async function connectWallet() {
       return;
     }
     
+    // Request accounts
     const existingAccounts = await provider.request({ method: 'eth_accounts' });
     const accounts = existingAccounts?.length > 0 
       ? existingAccounts 
       : await provider.request({ method: 'eth_requestAccounts' });
 
+    // Setup provider and signer
     const ethersLib = ensureEthers();
     state.provider = new ethersLib.providers.Web3Provider(provider);
+    state.provider.pollingInterval = 200;  // Fast polling for local dev
     state.signer = state.provider.getSigner();
     state.account = accounts[0];
     
+    // Verify network
     await switchToTargetChain(provider);
-    state.chainId = (await state.provider.getNetwork()).chainId;
+    const network = await state.provider.getNetwork();
+    state.chainId = network.chainId;
+    
+    console.log('Provider polling interval set to:', state.provider.pollingInterval, 'ms');
 
+    // Load configurations
     await loadERC20TokenInfo();
     
-    // Wait for RailgunWallet
-    await new Promise((resolve) => {
-      if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
-        resolve();
-      } else {
-        const check = setInterval(() => {
-          if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 100);
-      }
-    });
+    // Wait for RailgunWallet library
+    await waitForRailgunWallet();
     
+    // Initialize
     await initializeRailgunWallet();
     loadTransactions();
-    await generateMPK();
+    await checkRegistrationStatus();
     await refreshBalances();
     updateUI();
     
-    // Trigger MPK lookup if on transfer tab after connecting
+    // Re-trigger MPK lookup if on transfer tab
     retriggerTransferLookup();
     
     console.log('Wallet Connected:', state.account);
     
   } catch (error) {
-    console.error('Connection error:', error);
-    
-    if (error.code === 4001) {
-      console.warn('Connection Rejected:', error.message);
-    } else if (error.code === -32002) {
-      console.info('Pending Request:', error.message);
-    } else {
-      console.error('Connection Failed:', error.message);
-    }
+    handleConnectionError(error);
   } finally {
     state.isConnecting = false;
   }
 }
 
-// Refresh balances (with race condition fix)
-export async function refreshBalances() {
-  if (!state.provider || !state.account) {
-    return;
-  }
+async function waitForRailgunWallet() {
+  await new Promise((resolve) => {
+    if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
+      resolve();
+    } else {
+      const check = setInterval(() => {
+        if (typeof RailgunWallet !== 'undefined' && RailgunWallet.RailgunWalletBrowser) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 100);
+    }
+  });
+}
 
-  if (!contracts.testERC20 || contracts.testERC20 === '0x0000000000000000000000000000000000000000') {
-    return;
+function handleConnectionError(error) {
+  console.error('Connection error:', error);
+  
+  if (error.code === 4001) {
+    console.warn('Connection Rejected:', error.message);
+  } else if (error.code === -32002) {
+    console.info('Pending Request:', error.message);
+  } else {
+    console.error('Connection Failed:', error.message);
   }
+}
+
+// ==================== Balance Management ====================
+
+async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 500) {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (i < maxRetries - 1) {
+        const delay = initialDelay * Math.pow(2, i);
+        console.log(`Retry ${i + 1}/${maxRetries} after ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+export async function refreshBalances() {
+  if (!state.provider || !state.account) return;
+  if (!contracts.testERC20 || contracts.testERC20 === '0x0000000000000000000000000000000000000000') return;
 
   const ethersLib = ensureEthers();
-  const currentAccount = state.account;  // Save current account to detect changes
+  const currentAccount = state.account;  // Save to detect account changes
   
   try {
+    // Private balance - check first
+    if (state.railgunWallet) {
+      const privateBalance = await retryWithBackoff(() => 
+        state.railgunWallet.getBalance(currentAccount, contracts.testERC20, 0)
+      );
+      
+      if (currentAccount !== state.account) return;
+      
+      state.privateBalance = parseFloat(ethersLib.utils.formatEther(privateBalance)).toFixed(2);
+    } else if (!state.privateBalance) {
+      state.privateBalance = '0.00';
+    }
+    
+    // Public balance - check after private balance
     const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
-    const balance = await erc20.balanceOf(currentAccount);
+    const balance = await retryWithBackoff(() => erc20.balanceOf(currentAccount));
     const decimals = erc20TokenInfo.decimals || 18;
     const formattedBalance = ethersLib.utils.formatUnits(balance, decimals);
     
-    // Check if account changed during async operation
     if (currentAccount !== state.account) {
       console.log('Account changed during balance refresh, ignoring stale data');
       return;
@@ -231,65 +336,35 @@ export async function refreshBalances() {
     
     state.publicBalance = parseFloat(formattedBalance).toFixed(2);
     
-    // Get private balance
-    if (state.railgunWallet) {
-      const privateBalance = await state.railgunWallet.getBalance(
-        currentAccount,
-        contracts.testERC20,
-        0 // TokenType.ERC20
-      );
-      
-      // Check again before updating
-      if (currentAccount !== state.account) {
-        return;
-      }
-      
-      state.privateBalance = parseFloat(ethersLib.utils.formatEther(privateBalance)).toFixed(2);
-    } else if (!state.privateBalance) {
-      state.privateBalance = '0.00';
-    }
-    
     updateUI();
   } catch (error) {
-    console.warn('Failed to refresh balances:', error.message);
+    console.warn('Failed to refresh balances after retries:', error.message);
   }
 }
 
-// Generate MPK
-async function generateMPK() {
-  const ethersLib = ensureEthers();
-  
+// ==================== MPK and Registration ====================
+
+export async function generateMPK() {
   const savedKeys = await state.railgunWallet.loadKeys(state.account);
   
   let keys;
   if (savedKeys && savedKeys.spendingKey && savedKeys.viewingKey) {
-    keys = {
-      spendingKey: savedKeys.spendingKey,
-      viewingKey: savedKeys.viewingKey,
-    };
+    console.log('✅ Loading saved keys');
+    keys = savedKeys;
   } else {
+    console.log('🔐 Generating new keys');
     const signature = await state.signer.signMessage('Railgun Spendingkey');
     keys = await state.railgunWallet.generateKeys(state.account, signature);
   }
   
-  state.derivedKeys.viewingPublicKey = await state.railgunWallet.getViewingPublicKey(keys.viewingKey);
-  const mpkBytes = await state.railgunWallet.getMPK(keys.spendingKey, keys.viewingKey);
-  state.mpk = ethersLib.utils.hexlify(mpkBytes);
-  
-  const spendingKeyArray = ethersLib.utils.arrayify('0x' + keys.spendingKey);
-  const viewingKeyArray = ethersLib.utils.arrayify('0x' + keys.viewingKey);
-  
-  state.derivedKeys.spendingKey = spendingKeyArray;
-  state.derivedKeys.viewingKey = viewingKeyArray;
-  
-  await checkRegistrationStatus();
+  await loadKeysToState(keys);
   updateUI();
 }
 
-// Check registration status
 async function checkRegistrationStatus() {
   if (!state.provider || !state.account || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
     state.isRegistered = false;
+    await autoSetPrivacyMode(false, false);
     return;
   }
 
@@ -299,55 +374,101 @@ async function checkRegistrationStatus() {
     
     state.isRegistered = userInfo.mpk !== '0x0000000000000000000000000000000000000000000000000000000000000000';
     
-    // If registered, check allowance and auto-approve if needed
-    if (state.isRegistered && contracts.testERC20 !== '0x0000000000000000000000000000000000000000') {
-      const ethersLib = ensureEthers();
-      const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
-      const allowance = await testERC20.allowance(state.account, contracts.railgun);
-      
-      if (allowance.eq(0)) {
-        console.log('⚠️ Token not approved (allowance = 0), auto-triggering approval...');
-        try {
-          const testERC20Signer = testERC20.connect(state.signer);
-          const approveTx = await testERC20Signer.approve(contracts.railgun, ethersLib.constants.MaxUint256);
-          await approveTx.wait();
-          console.log('✅ Token approved');
-        } catch (approveError) {
-          if (approveError.code === 4001) {
-            console.warn('⚠️ Token approval cancelled by user');
-          } else {
-            console.warn('⚠️ Token approval failed:', approveError.message);
-          }
-        }
-      } else {
-        console.log('✅ Token already approved. Allowance:', ethersLib.utils.formatUnits(allowance, 18));
-      }
+    // If registered, auto-load keys
+    if (state.isRegistered) {
+      console.log('✅ User is registered, loading keys...');
+      await ensureKeysLoaded();
     }
+    
+    // Check token approval and handle privacy mode
+    await handleTokenApproval();
+    
   } catch (error) {
     console.warn('Failed to check registration status:', error);
     state.isRegistered = false;
+    await autoSetPrivacyMode(false, false);
   }
 }
 
-// Register MPK
+async function handleTokenApproval() {
+  if (!state.isRegistered || contracts.testERC20 === '0x0000000000000000000000000000000000000000') {
+    await autoSetPrivacyMode(false, false);
+    return;
+  }
+
+  const ethersLib = ensureEthers();
+  const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
+  const allowance = await testERC20.allowance(state.account, contracts.railgun);
+  
+  if (allowance.eq(0)) {
+    console.log('⚠️ Token not approved, triggering approval...');
+    await autoSetPrivacyMode(true, false);
+    
+    try {
+      const testERC20Signer = testERC20.connect(state.signer);
+      const approveTx = await testERC20Signer.approve(contracts.railgun, ethersLib.constants.MaxUint256);
+      await approveTx.wait();
+      console.log('✅ Token approved');
+      await autoSetPrivacyMode(true, true);
+    } catch (approveError) {
+      console.warn('⚠️ Token approval failed:', approveError.code === 4001 ? 'Cancelled by user' : approveError.message);
+      await autoSetPrivacyMode(true, false);
+    }
+  } else {
+    console.log('✅ Token already approved');
+    await autoSetPrivacyMode(true, true);
+  }
+}
+
+async function autoSetPrivacyMode(isRegistered, isApproved) {
+  const privacyToggle = document.getElementById('privacy-mode-toggle');
+  if (!privacyToggle) return;
+  
+  const shouldEnable = isRegistered && isApproved;
+  
+  if (privacyToggle.checked !== shouldEnable) {
+    privacyToggle.checked = shouldEnable;
+    privacyToggle.dispatchEvent(new Event('change', { bubbles: true }));
+    
+    if (shouldEnable) {
+      console.log('✅ Privacy mode enabled automatically');
+    } else if (isRegistered && !isApproved) {
+      console.log('⚠️ Privacy mode disabled (waiting for approval)');
+    } else {
+      console.log('ℹ️ Privacy mode disabled (not registered)');
+    }
+  }
+}
+
 export async function registerMPK() {
   if (!state.signer || !state.account) {
     console.warn('Not Connected: Please connect your wallet first');
     return;
   }
 
-  if (!state.mpk || !state.derivedKeys.viewingPublicKey) {
-    console.warn('MPK Not Ready: MPK not generated');
+  console.log('🔑 Preparing MPK and keys for registration...');
+  
+  try {
+    await generateMPK();
+  } catch (error) {
+    console.error('❌ MPK generation failed:', error);
+    if (error.code === 4001) console.warn('⚠️ User cancelled signature request');
     return;
   }
-
+  
+  if (!state.mpk || !state.derivedKeys.viewingPublicKey) {
+    console.error('❌ MPK or keys not properly generated');
+    return;
+  }
+  
   if (contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
     console.error('Contract Not Found: MPKRegistry contract not deployed');
     return;
   }
 
+  console.log('✅ MPK and keys ready for registration');
+  
   const ethersLib = ensureEthers();
-  UI.setButtonLoading('.register-btn', true, 'Registering...');
 
   try {
     const registry = new ethersLib.Contract(contracts.mpkRegistry, CONFIG.MPK_REGISTRY_ABI, state.signer);
@@ -358,7 +479,8 @@ export async function registerMPK() {
     
     const tx = await registry.register(state.mpk, viewingPublicKeyBytes32);
     
-    await tx.wait();
+    const { waitForTransactionFast } = await import('./utils.js');
+    await waitForTransactionFast(state.provider, tx.hash);
     
     if (state.railgunWallet) {
       await state.railgunWallet.registerAccount(state.account);
@@ -367,43 +489,43 @@ export async function registerMPK() {
     state.isRegistered = true;
     updateUI();
     
-    // Auto-approve token spending after registration
-    console.log('🔄 Approving token spending...');
-    try {
-      const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.signer);
-      const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
-      await approveTx.wait();
-      console.log('✅ Token approved. You can now Shield without additional approvals.');
-    } catch (approveError) {
-      console.warn('⚠️ Token approval failed:', approveError.message);
-    }
+    // Auto-approve token
+    await approveToken();
     
   } catch (error) {
     console.error('Registration failed:', error);
-  } finally {
-    UI.setButtonLoading('.register-btn', false);
   }
 }
 
-// Lookup MPK
+async function approveToken() {
+  console.log('🔄 Approving token spending...');
+  
+  const ethersLib = ensureEthers();
+  const { waitForTransactionFast } = await import('./utils.js');
+  
+  try {
+    const testERC20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.signer);
+    const approveTx = await testERC20.approve(contracts.railgun, ethersLib.constants.MaxUint256);
+    await waitForTransactionFast(state.provider, approveTx.hash);
+    console.log('✅ Token approved');
+    await autoSetPrivacyMode(true, true);
+  } catch (approveError) {
+    console.warn('⚠️ Token approval failed:', approveError.message);
+    await autoSetPrivacyMode(true, false);
+  }
+}
+
 export async function lookupMPK(address) {
   const ethersLib = ensureEthers();
-  if (!address || !ethersLib.utils.isAddress(address)) {
-    return null;
-  }
-
-  if (!state.provider || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') {
-    return null;
-  }
+  if (!address || !ethersLib.utils.isAddress(address)) return null;
+  if (!state.provider || contracts.mpkRegistry === '0x0000000000000000000000000000000000000000') return null;
 
   try {
     const registry = new ethersLib.Contract(contracts.mpkRegistry, CONFIG.MPK_REGISTRY_ABI, state.provider);
     const userInfo = await registry.getUserInfo(address);
     
     const zeroMPK = '0x0000000000000000000000000000000000000000000000000000000000000000';
-    if (userInfo.mpk === zeroMPK) {
-      return null;
-    }
+    if (userInfo.mpk === zeroMPK) return null;
 
     const viewingPublicKeyStr = typeof userInfo.viewingPublicKey === 'string' 
       ? userInfo.viewingPublicKey 
@@ -419,7 +541,8 @@ export async function lookupMPK(address) {
   }
 }
 
-// Transaction management
+// ==================== Transaction Management ====================
+
 function loadTransactions() {
   const saved = storage.get('railgun-transactions', []);
   if (state.account) {
@@ -444,24 +567,15 @@ function saveTransactions() {
     }
   });
   
-  // Keep only last 100 transactions
-  if (allTxs.length > 100) {
-    allTxs.splice(100);
-  }
+  if (allTxs.length > 100) allTxs.splice(100);
   
   storage.set('railgun-transactions', allTxs);
 }
 
 export function addTransaction(type, title, description, amount, txHash = null, status = 'success') {
-  const icons = {
-    shield: '🛡️',
-    unshield: '📤',
-    transfer: '🔄'
-  };
-
   state.transactions.unshift({
     type,
-    icon: icons[type] || '📝',
+    icon: TX_ICONS[type],
     title,
     description,
     amount,
@@ -491,7 +605,8 @@ export function updateTransactionStatus(txHash, status, title = null, descriptio
   }
 }
 
-// UI update wrapper
+// ==================== UI Updates ====================
+
 function updateUI() {
   UI.updateConnectButton(state);
   UI.updateBalances(state);
@@ -499,13 +614,11 @@ function updateUI() {
   UI.updateMPKDisplay(state, state.derivedKeys);
   UI.updateTransactionHistory(state.transactions);
   
-  // Update Shield MPK lookup for current user
   if (state.account) {
     handleShieldLookup(state.account);
   }
 }
 
-// MPK Lookup handlers
 async function handleShieldLookup(address) {
   if (!address) {
     UI.updateShieldLookup(null, null, null);
@@ -521,7 +634,6 @@ async function handleShieldLookup(address) {
 }
 
 export async function handleTransferLookup(address) {
-  // If address is empty, reset UI
   if (!address) {
     UI.updateTransferLookup(null, null, null);
     return;
@@ -529,18 +641,15 @@ export async function handleTransferLookup(address) {
   
   const ethersLib = ensureEthers();
   
-  // Validate address format before lookup
   if (!ethersLib.utils.isAddress(address)) {
-    // Invalid format - don't show error, just wait for user to finish typing
-    // Only show error if it looks complete but invalid
     if (address.length >= 42) {
       UI.updateTransferLookup(null, null, 'invalid');
     }
     return;
   }
   
-  // Valid address format - trigger lookup
-  console.log('Looking up MPK for:', address);
+  UI.updateTransferLookup(null, null, 'checking');
+  
   const userInfo = await lookupMPK(address);
   if (userInfo) {
     UI.updateTransferLookup(userInfo.mpk, userInfo.viewingPublicKey, true);
@@ -549,15 +658,12 @@ export async function handleTransferLookup(address) {
   }
 }
 
-// Helper: Re-trigger transfer lookup if on transfer tab
 function retriggerTransferLookup() {
-  // Check if currently on transfer tab
   const transferPanel = document.getElementById('transfer-panel');
   if (transferPanel && transferPanel.classList.contains('active')) {
-    const transferAddressInput = document.querySelector('#transfer-panel .form-input');
+    const transferAddressInput = document.getElementById('transfer-recipient');
     if (transferAddressInput) {
       const address = transferAddressInput.value.trim();
-      // Only lookup if address exists and has valid format
       if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
         console.log('Re-triggering MPK lookup after account change');
         handleTransferLookup(address);
@@ -566,7 +672,8 @@ function retriggerTransferLookup() {
   }
 }
 
-// Setup event listeners for account/chain changes
+// ==================== Event Listeners ====================
+
 export function setupProviderListeners() {
   const provider = getMetaMaskProvider();
   if (!provider) return;
@@ -578,9 +685,21 @@ export function setupProviderListeners() {
       updateUI();
       console.info('Wallet disconnected');
     } else {
-      state.publicBalance = '0.00';
-      state.privateBalance = '0.00';
-      connectWallet();
+      // Clear account-specific state before reconnecting
+      clearAccountState();
+      
+      connectWallet().then(() => {
+        const transferRecipient = document.getElementById('transfer-recipient');
+        const privacyModeToggle = document.getElementById('privacy-mode-toggle');
+        
+        if (transferRecipient && privacyModeToggle?.checked) {
+          const address = transferRecipient.value.trim();
+          if (address && /^0x[a-fA-F0-9]{40}$/.test(address)) {
+            console.log('Account changed, re-checking recipient registration...');
+            handleTransferLookup(address);
+          }
+        }
+      });
     }
   });
 
@@ -591,9 +710,7 @@ export function setupProviderListeners() {
   });
 }
 
-// Export helper for external use
-export { retriggerTransferLookup };
+// ==================== Exports ====================
 
-// Export state and key functions
-export { state as walletState };
+export { state as walletState, retriggerTransferLookup };
 export const loadContractConfig = loadConfig;

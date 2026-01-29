@@ -66,6 +66,10 @@ contract RailgunSmartWallet is RailgunLogic {
    * @param _transactions - Transactions to execute
    */
   function transact(Transaction[] calldata _transactions) external {
+    if (!isRootUpdated && lastEventBlock < block.number) {
+      Commitments.updateRoot();
+    }
+
     uint256 commitmentsCount = RailgunLogic.sumCommitments(_transactions);
 
     // Create accumulators

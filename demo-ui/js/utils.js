@@ -100,6 +100,17 @@ export function waitForLibrary(libraryName, maxWait = 5000) {
   });
 }
 
+// Fast transaction receipt polling (faster than provider.waitForTransaction)
+export async function waitForTransactionFast(provider, txHash, pollIntervalMs = 1000) {
+  while (true) {
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (receipt) {
+      return receipt;
+    }
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+}
+
 // LocalStorage helpers with error handling
 export const storage = {
   get(key, defaultValue = null) {
