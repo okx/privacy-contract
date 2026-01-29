@@ -310,20 +310,7 @@ export async function refreshBalances() {
   const currentAccount = state.account;  // Save to detect account changes
   
   try {
-    // Public balance
-    const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
-    const balance = await retryWithBackoff(() => erc20.balanceOf(currentAccount));
-    const decimals = erc20TokenInfo.decimals || 18;
-    const formattedBalance = ethersLib.utils.formatUnits(balance, decimals);
-    
-    if (currentAccount !== state.account) {
-      console.log('Account changed during balance refresh, ignoring stale data');
-      return;
-    }
-    
-    state.publicBalance = parseFloat(formattedBalance).toFixed(2);
-    
-    // Private balance
+    // Private balance - check first
     if (state.railgunWallet) {
       const privateBalance = await retryWithBackoff(() => 
         state.railgunWallet.getBalance(currentAccount, contracts.testERC20, 0)
@@ -335,6 +322,19 @@ export async function refreshBalances() {
     } else if (!state.privateBalance) {
       state.privateBalance = '0.00';
     }
+    
+    // Public balance - check after private balance
+    const erc20 = new ethersLib.Contract(contracts.testERC20, CONFIG.TEST_ERC20_ABI, state.provider);
+    const balance = await retryWithBackoff(() => erc20.balanceOf(currentAccount));
+    const decimals = erc20TokenInfo.decimals || 18;
+    const formattedBalance = ethersLib.utils.formatUnits(balance, decimals);
+    
+    if (currentAccount !== state.account) {
+      console.log('Account changed during balance refresh, ignoring stale data');
+      return;
+    }
+    
+    state.publicBalance = parseFloat(formattedBalance).toFixed(2);
     
     updateUI();
   } catch (error) {

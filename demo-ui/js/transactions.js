@@ -174,16 +174,28 @@ export async function handleShield(amountValue) {
       'pending'
     );
     
-    await shieldTx.wait();
+    const receipt = await waitForTransactionFast(walletState.provider, shieldTx.hash);
+    
+    const status = receipt.status === 1 ? 'success' : 'failed';
+    const description = receipt.status === 1 
+      ? `Moved ${amountValue} ${erc20TokenInfo.symbol} to private`
+      : 'Transaction reverted';
     
     updateTransactionStatus(
       shieldTx.hash,
-      'success',
+      status,
       TX_LABELS.PUBLIC_TO_PRIVATE,
-      `Moved ${amountValue} ${erc20TokenInfo.symbol} to private`
+      description
     );
     
-    // Scan and update in background
+    if (receipt.status === 0) {
+      throw new Error('Transaction reverted');
+    }
+    
+    console.log('📊 Refreshing balances...');
+    await refreshBalances();
+    
+    // Scan and update private balance in background
     (async () => {
       try {
         await walletState.railgunWallet.registerAccount(walletState.account);
@@ -295,6 +307,7 @@ export async function handleUnshield(amountValue, recipientAddress = null) {
 
     setButtonLoading(buttons, true, BUTTON_STATES.UPDATING);
     await walletState.railgunWallet.scanTransaction(result.txHash, walletState.account);
+    
     await refreshBalances();
 
   } catch (error) {
@@ -341,7 +354,7 @@ export async function handleERC20Transfer(recipientAddress, amountValue) {
       'pending'
     );
     
-    const receipt = await erc20Tx.wait();
+    const receipt = await waitForTransactionFast(walletState.provider, erc20Tx.hash);
     
     if (receipt.status === 0) {
       throw new Error('Transaction reverted');

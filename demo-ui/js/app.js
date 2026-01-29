@@ -352,15 +352,19 @@ class PrivacyWalletApp {
   setupCustomEvents() {
     window.addEventListener('register-mpk', () => registerMPK());
     
-    window.addEventListener('show-transaction', (e) => {
+    window.addEventListener('show-transaction', async (e) => {
       const tx = walletState.transactions[e.detail.index];
-      if (tx?.txHash) {
-        const blockExplorerUrl = window.CONFIG?.TARGET_CHAIN?.blockExplorerUrl;
-        if (blockExplorerUrl) {
-          window.open(`${blockExplorerUrl}/tx/${tx.txHash}`, '_blank');
-        } else {
-          console.log('Transaction Hash:', tx.txHash);
+      if (tx) {
+        let chainId = null;
+        if (walletState.provider) {
+          try {
+            const network = await walletState.provider.getNetwork();
+            chainId = network.chainId;
+          } catch (error) {
+            console.warn('Failed to get network chainId:', error);
+          }
         }
+        UI.showTransactionDetails(tx, chainId);
       }
     });
 
