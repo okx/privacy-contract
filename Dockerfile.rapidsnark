@@ -23,7 +23,7 @@ RUN apt-get update \
         m4 \
         nasm \
         pkg-config \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,6 +31,17 @@ RUN curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 FROM base AS builder
+
+# Ensure Rust is in PATH for this stage
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Verify/install Rust in builder stage
+RUN if [ ! -f /root/.cargo/bin/cargo ]; then \
+        echo "Rust not found, installing..." && \
+        curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y; \
+    else \
+        echo "Rust already installed: $(cargo --version 2>/dev/null || /root/.cargo/bin/cargo --version)"; \
+    fi
 
 WORKDIR /opt/rapidsnark
 
@@ -40,43 +51,59 @@ RUN git clone -b ${RAPIDSNARK_BRANCH} ${RAPIDSNARK_REPO} . \
 RUN ./build_pistache.sh \
     && if [ "$(uname -m)" = "aarch64" ]; then \
          ./build_gmp.sh aarch64 && \
-         mkdir -p build_prover_server && cd build_prover_server && \
-         cmake .. -DTARGET_PLATFORM=aarch64 -DBUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release \
-           -DCMAKE_INSTALL_PREFIX=../package -DUSE_OPENMP=ON -DUSE_ASM=NO -DUSE_LOGGER=ON && \
-         make -j$(nproc) && make install && cd ..; \
+         make prover-server; \
        else \
          ./build_gmp.sh host && \
          make prover-server; \
        fi \
     && cp package/bin/proverServer /usr/local/bin/proverServer
 
-# Build witness generator for selected circuit (needed by prover server)
+# Build circom (cached layer - rarely changes)
 RUN git clone --depth 1 https://github.com/iden3/circom.git /opt/circom \
     && cd /opt/circom \
-    && cargo build --release \
+    && /root/.cargo/bin/cargo build --release \
     && cp target/release/circom /usr/local/bin/circom \
-    && chmod +x /usr/local/bin/circom \
-    && git clone --depth 1 https://github.com/Railgun-Privacy/circuits-v2.git /opt/circuits-v2 \
+    && chmod +x /usr/local/bin/circom
+
+# Clone circuits-v2 and generate circuit files (cached layer)
+RUN git clone --depth 1 https://github.com/Railgun-Privacy/circuits-v2.git /opt/circuits-v2 \
     && cd /opt/circuits-v2 \
     && npm install \
-    && node /opt/circuits-v2/scripts/generate_circuits \
-    && CIRCUIT_FILE="/opt/circuits-v2/src/generated/${RAPIDSNARK_CIRCUIT}.circom" \
-    && [ -f "$CIRCUIT_FILE" ] \
-    && /usr/local/bin/circom --r1cs --sym --wasm --c "$CIRCUIT_FILE" --output /opt/rapidsnark/build \
-    && cd "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}_cpp" \
-    && sed -i 's|CFLAGS=-std=c++11 -O3 -I.|CFLAGS=-std=c++11 -O3 -I. -I../../depends/json/single_include|' Makefile \
-    && if [ "$(uname -m)" = "aarch64" ]; then \
-         echo "ARM64: skipping C++ witness generator, using WASM"; \
-       else \
-         make && cp "${RAPIDSNARK_CIRCUIT}" "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}"; \
-       fi
+    && node /opt/circuits-v2/scripts/generate_circuits
 
-# For ARM64: create witness generator wrapper using WASM
-RUN if [ "$(uname -m)" = "aarch64" ]; then \
-      echo '#!/bin/bash' > /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT} && \
-      echo 'node /opt/rapidsnark/build/'${RAPIDSNARK_CIRCUIT}'_js/generate_witness.js /opt/rapidsnark/build/'${RAPIDSNARK_CIRCUIT}'_js/'${RAPIDSNARK_CIRCUIT}'.wasm "$1" "$2"' >> /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT} && \
-      chmod +x /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}; \
-    fi
+# Compile circuit with circom (depends on RAPIDSNARK_CIRCUIT arg)
+RUN CIRCUIT_FILE="/opt/circuits-v2/src/generated/${RAPIDSNARK_CIRCUIT}.circom" \
+    && [ -f "$CIRCUIT_FILE" ] \
+    && /usr/local/bin/circom --r1cs --sym --wasm --c --O2 "$CIRCUIT_FILE" --output /opt/rapidsnark/build
+
+# Build witness generator with ARM64 assembly optimizations
+RUN cd "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}_cpp" \
+    && if [ "$(uname -m)" = "aarch64" ]; then \
+         echo "ARM64: building witness generator with assembly optimizations" && \
+         echo "Installing ffiasm dependencies (Node.js 22)..." && \
+         curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+         apt-get update && apt-get install -y nodejs && \
+         npm install -g ffiasm && \
+         echo "Generating ARM64 assembly with ffiasm..." && \
+         npx ffiasm \
+           /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}_cpp/fr.asm \
+           /opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}_cpp/fr_raw_arm64.s \
+           -f \
+           -p aarch64 \
+           -l debug && \
+         echo "Building C++ witness generator with assembly..." && \
+         sed -i 's|CFLAGS=-std=c++11 -O3 -I.|CFLAGS=-std=c++11 -O3 -I. -I../../depends/json/single_include|' Makefile && \
+         make USELIBBACKTRACE=0 && \
+         cp "${RAPIDSNARK_CIRCUIT}" "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}" && \
+         cp "${RAPIDSNARK_CIRCUIT}.dat" "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}.dat" && \
+         echo "✓ ARM64 witness generator built with assembly optimizations"; \
+       else \
+         echo "x86: building witness generator with native ASM" && \
+         sed -i 's|CFLAGS=-std=c++11 -O3 -I.|CFLAGS=-std=c++11 -O3 -I. -I../../depends/json/single_include|' Makefile && \
+         make && \
+         cp "${RAPIDSNARK_CIRCUIT}" "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}" && \
+         cp "${RAPIDSNARK_CIRCUIT}.dat" "/opt/rapidsnark/build/${RAPIDSNARK_CIRCUIT}.dat"; \
+       fi
 
 # Generate zkey inside container (no host mount needed)
 RUN npm install -g snarkjs \
