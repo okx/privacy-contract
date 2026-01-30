@@ -2,6 +2,10 @@
 
 set -e  # Exit on error
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROVER_SERVER_PID=""
+PROVER_SERVER_CONTAINER=""
+
 # Cleanup function - kills Hardhat node and web server on exit
 cleanup() {
     echo ""
@@ -10,6 +14,15 @@ cleanup() {
     lsof -ti :8545 | xargs kill 2>/dev/null || true
     echo "  - Stopping web server (port 3000)..."
     lsof -ti :3000 | xargs kill 2>/dev/null || true
+    if [ -n "$PROVER_SERVER_PID" ]; then
+        echo "  - Stopping rapidsnark server (pid ${PROVER_SERVER_PID})..."
+        kill $PROVER_SERVER_PID 2>/dev/null || true
+    fi
+    if [ -n "$PROVER_SERVER_CONTAINER" ]; then
+        echo "  - Stopping rapidsnark docker container (${PROVER_SERVER_CONTAINER})..."
+        docker stop "$PROVER_SERVER_CONTAINER" > /dev/null 2>&1 || true
+        docker rm "$PROVER_SERVER_CONTAINER" > /dev/null 2>&1 || true
+    fi
     echo "✅ All services stopped"
     exit 0
 }
@@ -27,6 +40,126 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
     echo ""
 fi
+
+# Setup rapidsnark based on mode
+setup_rapidsnark() {
+    if [ "$USE_RAPIDSNARK" != "true" ]; then
+        echo "Rapidsnark disabled (USE_RAPIDSNARK != true)"
+        return
+    fi
+
+    case "$RAPIDSNARK_MODE" in
+        server)
+            setup_rapidsnark_server
+            ;;
+        docker)
+            setup_rapidsnark_docker
+            ;;
+        remote)
+            echo "Rapidsnark mode: remote (not supported in run_web.sh)"
+            ;;
+        local|"")
+            setup_rapidsnark_local
+            ;;
+        *)
+            echo "Unknown RAPIDSNARK_MODE: $RAPIDSNARK_MODE (expected: server, docker, remote, or local)"
+            exit 1
+            ;;
+    esac
+}
+
+# Setup rapidsnark in server mode
+setup_rapidsnark_server() {
+    echo "Rapidsnark mode: server"
+
+    local server_url="${RAPIDSNARK_SERVER_URL:-http://localhost:8080}"
+
+    if curl -s "${server_url}/status" > /dev/null 2>&1; then
+        echo "Rapidsnark server already running at ${server_url}"
+        return
+    fi
+
+    echo "Rapidsnark server not running at ${server_url}"
+    "${SCRIPT_DIR}/setup_rapidsnark_server.sh" launch &
+    PROVER_SERVER_PID=$!
+
+    echo "Waiting for server to start..."
+    for i in {1..30}; do
+        if curl -s "${server_url}/status" > /dev/null 2>&1; then
+            echo "Rapidsnark server ready at ${server_url}"
+            return
+        fi
+        sleep 1
+    done
+
+    echo "Warning: Server may not be ready yet, continuing anyway..."
+}
+
+# Setup rapidsnark in local/standalone mode
+setup_rapidsnark_local() {
+    echo "Rapidsnark mode: local (standalone)"
+
+    local rapidsnark_bin="${RAPIDSNARK_BIN_PATH:-/usr/local/bin/rapidsnark}"
+    if [ ! -x "$rapidsnark_bin" ]; then
+        echo "rapidsnark not found at $rapidsnark_bin, installing..."
+        "${SCRIPT_DIR}/install_rapidsnark.sh"
+    else
+        echo "rapidsnark already installed: $rapidsnark_bin"
+    fi
+}
+
+# Setup rapidsnark in docker mode
+setup_rapidsnark_docker() {
+    echo "Rapidsnark mode: docker"
+
+    if ! command -v docker > /dev/null 2>&1; then
+        echo "docker not found. Please install Docker and ensure it is running."
+        exit 1
+    fi
+
+    local server_port="${RAPIDSNARK_DOCKER_PORT:-8080}"
+    local server_url="${RAPIDSNARK_SERVER_URL:-http://localhost:${server_port}}"
+    local image_name="${RAPIDSNARK_DOCKER_IMAGE:-rapidsnark-prover:local}"
+    local container_name="${RAPIDSNARK_DOCKER_CONTAINER:-rapidsnark-prover}"
+    local circuit="${RAPIDSNARK_CIRCUIT:-02x03}"
+
+    # zkeys are now built inside the Docker image - no host mount needed
+
+    if ! docker image inspect "$image_name" > /dev/null 2>&1 || [ "$RAPIDSNARK_DOCKER_BUILD" = "true" ]; then
+        echo "Building docker image ${image_name}..."
+        docker build \
+            --build-arg RAPIDSNARK_CIRCUIT="${circuit}" \
+            -t "$image_name" -f "${SCRIPT_DIR}/Dockerfile.rapidsnark" "${SCRIPT_DIR}"
+    fi
+
+    if docker ps --filter "name=^/${container_name}$" --format '{{.Names}}' | grep -q "^${container_name}$"; then
+        echo "Rapidsnark docker container already running: ${container_name}"
+        return
+    fi
+
+    if docker ps -a --filter "name=^/${container_name}$" --format '{{.Names}}' | grep -q "^${container_name}$"; then
+        docker rm "${container_name}" > /dev/null
+    fi
+
+    echo "Starting rapidsnark docker container..."
+    docker run -d \
+        --name "${container_name}" \
+        -p "${server_port}:8080" \
+        -e "RAPIDSNARK_CIRCUIT=${circuit}" \
+        "${image_name}" > /dev/null
+    PROVER_SERVER_CONTAINER="${container_name}"
+
+    echo "Waiting for server to start..."
+    for i in {1..30}; do
+        if curl -s "${server_url}/status" > /dev/null 2>&1; then
+            echo "Rapidsnark server ready at ${server_url}"
+            return
+        fi
+        sleep 1
+    done
+
+    echo "Warning: Server may not be ready yet, continuing anyway..."
+}
 
 # Determine mode
 if [ "$LOCAL" = "true" ]; then
@@ -53,6 +186,9 @@ nvm install 22
 echo "📦 Installing dependencies..."
 yarn install
 echo ""
+
+# Setup rapidsnark (optional)
+setup_rapidsnark
 
 # Start Hardhat node and deploy (only in local mode)
 if [ "$IS_LOCAL" = "true" ]; then

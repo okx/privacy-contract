@@ -6,6 +6,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+require('ts-node/register/transpile-only');
+const { proveWithRapidsnarkServerForCircuit } = require('../helpers/logic/prover');
 
 const PORT = 3000;
 
@@ -147,7 +149,8 @@ function sendJson(res, statusCode, data) {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type'
   });
-  res.end(JSON.stringify(data));
+  // Handle BigInt serialization
+  res.end(JSON.stringify(data, (_, v) => typeof v === 'bigint' ? v.toString() : v));
 }
 
 // Wait for transaction receipt with fallback polling
@@ -256,6 +259,24 @@ async function handleApiRequest(req, res, pathname) {
     } catch (error) {
       console.error('   ❌ Broadcast failed:', error.message);
       return sendJson(res, 500, { success: false, error: error.message });
+    }
+  }
+
+  // POST /api/prove - Generate proof via rapidsnark server
+  if (pathname === '/api/prove' && req.method === 'POST') {
+    try {
+      const body = await parseBody(req);
+      const { circuit, inputs } = body;
+
+      if (!circuit || !inputs) {
+        return sendJson(res, 400, { success: false, error: 'Missing circuit or inputs' });
+      }
+
+      const proofBundle = await proveWithRapidsnarkServerForCircuit(inputs, circuit);
+      return sendJson(res, 200, { success: true, proof: proofBundle.solidity });
+    } catch (error) {
+      console.error('Proof generation failed:', error.message);
+      return sendJson(res, 500, { success: false, error: error.message || 'Proof generation failed' });
     }
   }
 

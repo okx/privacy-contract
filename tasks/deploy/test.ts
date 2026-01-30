@@ -144,13 +144,17 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   // Set artifacts
   console.log('\nSetting Artifacts');
   
-  // Custom circuit list: inputs 1-10, outputs 1 or 2 (20 circuits total)
-  const customCircuits = [];
-  for (let nullifiers = 1; nullifiers <= 10; nullifiers++) {
-    for (let commitments = 1; commitments <= 2; commitments++) {
-      customCircuits.push({ nullifiers, commitments });
-    }
+  // Match demo.ts usage, but allow override via RAPIDSNARK_CIRCUIT (e.g. "02x03")
+  const circuitEnv = process.env.RAPIDSNARK_CIRCUIT || '02x03';
+  const circuitMatch = circuitEnv.match(/^(\d{2})x(\d{2})$/);
+  if (!circuitMatch) {
+    throw new Error(`Invalid RAPIDSNARK_CIRCUIT format: ${circuitEnv} (expected NNxNN, e.g. 02x03)`);
   }
+  const nullifiers = parseInt(circuitMatch[1], 10);
+  const commitments = parseInt(circuitMatch[2], 10);
+  const customCircuits = [
+    { nullifiers, commitments },
+  ];
   
   console.log(`Loading ${customCircuits.length} circuits (inputs: 1-10, outputs: 1-2)...`);
   await loadArtifacts(railgun, customCircuits);

@@ -32,6 +32,9 @@ storage-layouts
 scripts/ephemeral
 node.out
 deployments.json
+.env
+tmp/
+temp_*.json
 demo-ui/deployments.json
 .env
 

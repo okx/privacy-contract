@@ -5,7 +5,7 @@
 
 import { browserStorage } from './storage-browser';
 import { IStorage, UTXOData, Keys, ScanState } from './types';
-import { hexStringToArray, arrayToHexString, bigIntToArray, arrayToBigInt } from '../global/bytes';
+import { hexStringToArray, arrayToHexString, bigIntToArray, arrayToBigInt, arrayToByteLength } from '../global/bytes';
 import { SNARK_SCALAR_FIELD } from '../global/constants';
 // Use browser-logic versions (already have crypto replaced)
 import { TokenData, TokenType, Note, ShieldRequest, UnshieldNote, getTokenID } from '../browser-logic/note';
@@ -48,6 +48,69 @@ let globalMerkleTree: MerkleTree | null = null;
  * Storage key for MerkleTree persistence
  */
 const MERKLE_TREE_STORAGE_KEY = 'railgun-merkle-tree';
+
+/**
+ * Hash bound params with ABI encoding when ethers is available (fallback to simplified hash).
+ */
+function hashBoundParamsBrowser(boundParams: {
+  treeNumber: number;
+  minGasPrice: bigint;
+  unshield: number;
+  chainID: bigint;
+  adaptContract: string;
+  adaptParams: Uint8Array;
+  commitmentCiphertext: Array<{
+    ciphertext: Uint8Array[];
+    blindedSenderViewingKey: Uint8Array;
+    blindedReceiverViewingKey: Uint8Array;
+    annotationData: Uint8Array;
+    memo: Uint8Array;
+  }>;
+}): Uint8Array {
+  const ethersLib = (globalThis as any)?.ethers;
+
+  if (ethersLib?.utils?.defaultAbiCoder) {
+    const commitmentCiphertext = boundParams.commitmentCiphertext.map((ct) => ({
+      ciphertext: ct.ciphertext.map((c) => arrayToHexString(c, true)),
+      blindedSenderViewingKey: arrayToHexString(ct.blindedSenderViewingKey, true),
+      blindedReceiverViewingKey: arrayToHexString(ct.blindedReceiverViewingKey, true),
+      annotationData: arrayToHexString(ct.annotationData, true),
+      memo: arrayToHexString(ct.memo, true),
+    }));
+
+    const encodedBytes = hexStringToArray(
+      ethersLib.utils.defaultAbiCoder.encode(
+        [
+          'tuple(uint16 treeNumber, uint48 minGasPrice, uint8 unshield, uint64 chainID, address adaptContract, bytes32 adaptParams, tuple(bytes32[4] ciphertext, bytes32 blindedSenderViewingKey, bytes32 blindedReceiverViewingKey, bytes annotationData, bytes memo)[] commitmentCiphertext) boundParams',
+        ],
+        [{
+          treeNumber: boundParams.treeNumber,
+          minGasPrice: boundParams.minGasPrice,
+          unshield: boundParams.unshield,
+          chainID: boundParams.chainID,
+          adaptContract: boundParams.adaptContract,
+          adaptParams: arrayToHexString(boundParams.adaptParams, true),
+          commitmentCiphertext,
+        }],
+      ),
+    );
+
+    const prehash = arrayToBigInt(hash.keccak256(encodedBytes));
+    return bigIntToArray(BigInt(prehash) % SNARK_SCALAR_FIELD, 32);
+  }
+
+  // Fallback: simplified hash (kept for environments without ethers)
+  const boundParamsData = new Uint8Array([
+    ...bigIntToArray(BigInt(boundParams.treeNumber), 2),
+    ...bigIntToArray(boundParams.minGasPrice, 6),
+    ...bigIntToArray(BigInt(boundParams.unshield), 1),
+    ...bigIntToArray(boundParams.chainID, 8),
+    ...hexStringToArray(boundParams.adaptContract),
+    ...boundParams.adaptParams,
+  ]);
+  const boundParamsHashRaw = hash.keccak256(boundParamsData);
+  return bigIntToArray((arrayToBigInt(boundParamsHashRaw) % SNARK_SCALAR_FIELD), 32);
+}
 
 /**
  * Save MerkleTree to localStorage
@@ -803,6 +866,7 @@ class RailgunWalletBrowser {
     minGasPrice: bigint = 0n,
     adaptContract: string = '0x0000000000000000000000000000000000000000',
     adaptParams: Uint8Array = new Uint8Array(32),
+    unshieldType?: number,
   ): Promise<{
     merkleRoot: Uint8Array;
     nullifiers: Uint8Array[];
@@ -828,6 +892,10 @@ class RailgunWalletBrowser {
 
     // Get tree number (default: 0)
     const treeNumber = merkletree.treeNumber || 0;
+
+    const unshield = unshieldType !== undefined
+      ? unshieldType
+      : (outputNotes[outputNotes.length - 1] instanceof UnshieldNote ? 1 : 0);
 
     // Generate Merkle proofs for input notes
     const merkleProofs = await Promise.all(
@@ -857,8 +925,9 @@ class RailgunWalletBrowser {
     );
 
     // Generate commitment ciphertext (for private notes only, not unshield)
+    const ciphertextNotes = unshield === 0 ? outputNotes : outputNotes.slice(0, outputNotes.length - 1);
     const commitmentCiphertext = await Promise.all(
-      outputNotes.slice(0, outputNotes.length - 1).map(async (note) => {
+      ciphertextNotes.map(async (note) => {
         if (note instanceof UnshieldNote) {
           throw new Error('UnshieldNote should not be in ciphertext list');
         }
@@ -866,21 +935,16 @@ class RailgunWalletBrowser {
       }),
     );
 
-    // Calculate bound params hash (simplified version - full version needs ethers ABI encoder)
-    // For now, we'll use a simplified hash
-    const boundParamsData = new Uint8Array([
-      ...bigIntToArray(BigInt(treeNumber), 2),
-      ...bigIntToArray(minGasPrice, 6),
-      ...bigIntToArray(BigInt(1), 1), // UnshieldType.NORMAL
-      ...bigIntToArray(chainID, 8),
-      ...hexStringToArray(adaptContract),
-      ...adaptParams,
-    ]);
-    const boundParamsHashRaw = hash.keccak256(boundParamsData);
-    const boundParamsHash = bigIntToArray(
-      (arrayToBigInt(boundParamsHashRaw) % SNARK_SCALAR_FIELD),
-      32,
-    );
+    // Calculate bound params hash (ABI-encoded when ethers is available)
+    const boundParamsHash = hashBoundParamsBrowser({
+      treeNumber,
+      minGasPrice,
+      unshield,
+      chainID,
+      adaptContract,
+      adaptParams,
+      commitmentCiphertext,
+    });
 
     // Generate circuit inputs (partial - missing SNARK proof)
     const token = inputNotes[0].getTokenID();
@@ -902,6 +966,147 @@ class RailgunWalletBrowser {
         if (note instanceof UnshieldNote) {
           // UnshieldNote.getNotePublicKey() doesn't need keys
           return note.getNotePublicKey();
+        }
+        return note.getNotePublicKey(spendingKey, viewingKey);
+      }),
+    );
+    const valueOut = outputNotes.map((note) => note.value);
+
+    const circuitInputs = {
+      // PUBLIC INPUTS
+      merkleRoot: arrayToBigInt(merkleRoot),
+      boundParamsHash: arrayToBigInt(boundParamsHash),
+      nullifiers: nullifiers.map(arrayToBigInt),
+      commitmentsOut: commitments.map(arrayToBigInt),
+
+      // PRIVATE INPUTS
+      token: arrayToBigInt(token),
+      publicKey: publicKey.map(arrayToBigInt) as [bigint, bigint],
+      signature: signature.map(arrayToBigInt) as [bigint, bigint, bigint],
+      randomIn: randomIn.map(arrayToBigInt),
+      valueIn,
+      pathElements: pathElements.map((el) => el.map(arrayToBigInt)),
+      leavesIndices,
+      nullifyingKey: arrayToBigInt(nullifyingKey),
+      npkOut: npkOut.map(arrayToBigInt),
+      valueOut,
+    };
+
+    return {
+      merkleRoot,
+      nullifiers,
+      commitments,
+      merkleProofs,
+      commitmentCiphertext,
+      boundParamsHash,
+      circuitInputs,
+    };
+  }
+
+  /**
+   * Generate transaction data for transfer (includes correct commitments for recipient MPK)
+   */
+  async generateTransferTransactionData(
+    account: string,
+    inputNotes: Note[],
+    outputNotes: Note[],
+    recipientMPK: string,
+    recipientViewingPublicKey: string,
+    chainID: bigint,
+    minGasPrice: bigint = 0n,
+    adaptContract: string = '0x0000000000000000000000000000000000000000',
+    adaptParams: Uint8Array = new Uint8Array(32),
+    inputUTXOs?: UTXOData[],
+  ): Promise<{
+    merkleRoot: Uint8Array;
+    nullifiers: Uint8Array[];
+    commitments: Uint8Array[];
+    merkleProofs: Array<{ element: Uint8Array; elements: Uint8Array[]; indices: number; root: Uint8Array }>;
+    commitmentCiphertext: any[];
+    boundParamsHash: Uint8Array;
+    circuitInputs: any;
+  }> {
+    const keys = await this.storage.loadKeys(account);
+    if (!keys) {
+      throw new Error(`Keys not found for account: ${account}`);
+    }
+
+    const spendingKey = hexStringToArray(keys.spendingKey);
+    const viewingKey = hexStringToArray(keys.viewingKey);
+    const recipientMasterPubKey = hexStringToArray(recipientMPK);
+    const recipientViewingPubKey = hexStringToArray(recipientViewingPublicKey);
+
+    const merkletree = await getGlobalMerkleTree();
+    const merkleRoot = merkletree.root;
+    const treeNumber = merkletree.treeNumber || 0;
+    const unshield = 0;
+
+    const merkleProofs = await Promise.all(
+      inputNotes.map(async (note, index) => {
+        if (inputUTXOs && inputUTXOs[index] && inputUTXOs[index].leafIndex !== undefined) {
+          return merkletree.generateProofByIndex(inputUTXOs[index].leafIndex);
+        }
+        const noteHash = await note.getHash(spendingKey, viewingKey);
+        return merkletree.generateProof(noteHash);
+      }),
+    );
+
+    const nullifiers = await Promise.all(
+      inputNotes.map(async (note, index) => {
+        const leafIndex = merkleProofs[index].indices;
+        return note.getNullifier(viewingKey, leafIndex);
+      }),
+    );
+
+    const commitments = await Promise.all(
+      outputNotes.map(async (note, index) => {
+        const isRecipient = index === outputNotes.length - 1;
+        if (isRecipient) {
+          return note.getHashWithMPK(recipientMasterPubKey);
+        }
+        return note.getHash(spendingKey, viewingKey);
+      }),
+    );
+
+    const commitmentCiphertext = await Promise.all(
+      outputNotes.map(async (note, index) => {
+        const isRecipient = index === outputNotes.length - 1;
+        if (isRecipient) {
+          return note.encryptForReceiver(recipientMasterPubKey, viewingKey, recipientViewingPubKey, false);
+        }
+        return note.encrypt(spendingKey, viewingKey, viewingKey, false);
+      }),
+    );
+
+    const boundParamsHash = hashBoundParamsBrowser({
+      treeNumber,
+      minGasPrice,
+      unshield,
+      chainID,
+      adaptContract,
+      adaptParams,
+      commitmentCiphertext,
+    });
+
+    const token = inputNotes[0].getTokenID();
+    const publicKey = await inputNotes[0].getSpendingPublicKey(spendingKey);
+    const signature = await inputNotes[0].sign(
+      spendingKey,
+      merkleRoot,
+      boundParamsHash,
+      nullifiers,
+      commitments,
+    );
+    const randomIn = inputNotes.map((note) => note.random);
+    const valueIn = inputNotes.map((note) => note.value);
+    const pathElements = merkleProofs.map((proof) => proof.elements);
+    const leavesIndices = merkleProofs.map((proof) => proof.indices);
+    const nullifyingKey = await inputNotes[0].getNullifyingKey(viewingKey);
+    const npkOut = await Promise.all(
+      outputNotes.map(async (note, index) => {
+        const isRecipient = index === outputNotes.length - 1;
+        if (isRecipient) {
+          return hash.poseidon([recipientMasterPubKey, arrayToByteLength(note.random, 32)]);
         }
         return note.getNotePublicKey(spendingKey, viewingKey);
       }),

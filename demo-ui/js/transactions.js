@@ -7,6 +7,27 @@ import * as UI from './ui.js';
 // Signature message for key derivation
 const SIGNATURE_MESSAGE = 'Railgun Spendingkey';
 
+function getCircuitName(numInputs, numOutputs) {
+  const inputs = String(numInputs).padStart(2, '0');
+  const outputs = String(numOutputs).padStart(2, '0');
+  return `${inputs}x${outputs}`;
+}
+
+async function requestProof(circuit, inputs) {
+  const response = await fetch('/api/prove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ circuit, inputs }, (_key, value) => (
+      typeof value === 'bigint' ? value.toString() : value
+    )),
+  });
+  const result = await response.json();
+  if (!result.success) {
+    throw new Error(result.error || 'Proof generation failed');
+  }
+  return result.proof;
+}
+
 // Request user signature confirmation
 async function requestSignatureConfirmation() {
   const ethersLib = ensureEthers();
@@ -320,6 +341,21 @@ export async function handleUnshield(amountValue) {
     const network = await walletState.provider.getNetwork();
     const chainID = BigInt(network.chainId);
 
+    const txData = await walletState.railgunWallet.generateTransactionData(
+      walletState.account,
+      unshieldData.inputNotes,
+      unshieldData.outputNotes,
+      chainID,
+      0n,
+      '0x0000000000000000000000000000000000000000',
+      new Uint8Array(32),
+      1,
+    );
+
+    UI.setButtonLoading('#unshield-panel .submit-btn', true, 'Generating proof...');
+    const circuit = getCircuitName(unshieldData.inputNotes.length, unshieldData.outputNotes.length);
+    const proof = await requestProof(circuit, txData.circuitInputs);
+
     const transaction = await walletState.railgunWallet.formatTransactionForContract(
       walletState.account,
       unshieldData.inputNotes,
@@ -330,6 +366,7 @@ export async function handleUnshield(amountValue) {
       new Uint8Array(32),
       unshieldData.inputUTXOs,
     );
+    transaction.proof = proof;
 
     const formattedTransaction = formatTransactionForContract(transaction);
 
@@ -437,6 +474,23 @@ export async function handleTransfer(recipientAddress, amountValue) {
     const network = await walletState.provider.getNetwork();
     const chainID = BigInt(network.chainId);
 
+    const txData = await walletState.railgunWallet.generateTransferTransactionData(
+      walletState.account,
+      transferData.inputNotes,
+      transferData.outputNotes,
+      userInfo.mpk,
+      userInfo.viewingPublicKey,
+      chainID,
+      0n,
+      '0x0000000000000000000000000000000000000000',
+      new Uint8Array(32),
+      transferData.inputUTXOs,
+    );
+
+    UI.setButtonLoading('#transfer-panel .submit-btn', true, 'Generating proof...');
+    const circuit = getCircuitName(transferData.inputNotes.length, transferData.outputNotes.length);
+    const proof = await requestProof(circuit, txData.circuitInputs);
+
     const transaction = await walletState.railgunWallet.formatTransferTransactionForContract(
       walletState.account,
       transferData.inputNotes,
@@ -449,6 +503,7 @@ export async function handleTransfer(recipientAddress, amountValue) {
       new Uint8Array(32),
       transferData.inputUTXOs,
     );
+    transaction.proof = proof;
 
     const formattedTransaction = formatTransactionForContract(transaction);
 

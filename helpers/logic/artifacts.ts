@@ -7,15 +7,22 @@ import * as path from 'path';
 
 // ============ LOCAL CIRCUIT CONFIGURATION ============
 const USE_LOCAL_CIRCUITS = process.env.USE_LOCAL_CIRCUITS === 'true';
+const RAPIDSNARK_MODE = process.env.RAPIDSNARK_MODE || 'local';
 const LOCAL_CIRCUITS_PATH = process.env.LOCAL_CIRCUITS_PATH || path.join(__dirname, '../../../circuits-v2');
 
-// Local circuit configs (same as circuitConfigs.js in circuits-v2)
-const localCircuitConfigs: ArtifactConfig[] = [];
-for (let nullifiers = 1; nullifiers <= 14; nullifiers += 1) {
-  for (let commitments = 1; commitments <= 14 - nullifiers; commitments += 1) {
-    localCircuitConfigs.push({ nullifiers, commitments });
-  }
-}
+// Server mode only supports 02x03 circuit (from rapidsnark repo)
+const serverModeCircuitConfigs: ArtifactConfig[] = [
+  { nullifiers: 2, commitments: 3 }, // 02x03
+];
+
+// Local mode - only 02x03 circuit (same as server mode for now)
+const localModeCircuitConfigs: ArtifactConfig[] = [
+  { nullifiers: 2, commitments: 3 }, // 02x03
+];
+
+// Select circuit configs based on rapidsnark mode
+const localCircuitConfigs: ArtifactConfig[] =
+  RAPIDSNARK_MODE === 'server' ? serverModeCircuitConfigs : localModeCircuitConfigs;
 
 /**
  * Get circuit name from nullifiers and commitments count
@@ -25,16 +32,25 @@ function circuitConfigToName(nullifiers: number, commitments: number): string {
 }
 
 /**
- * Load artifact from local compiled circuits
+ * Get local artifact file paths (for rapidsnark direct file access)
  */
-function getLocalArtifact(nullifiers: number, commitments: number): Artifact {
+function getLocalArtifactPaths(nullifiers: number, commitments: number): { wasmPath: string; zkeyPath: string; vkeyPath: string } {
   const name = circuitConfigToName(nullifiers, commitments);
   const buildDir = path.join(LOCAL_CIRCUITS_PATH, 'build');
   const zkeyDir = path.join(LOCAL_CIRCUITS_PATH, 'zkeys');
 
-  const wasmPath = path.join(buildDir, `${name}_js/${name}.wasm`);
-  const zkeyPath = path.join(zkeyDir, `${name}.zkey`);
-  const vkeyPath = path.join(zkeyDir, `${name}.vkey.json`);
+  return {
+    wasmPath: path.join(buildDir, `${name}_js/${name}.wasm`),
+    zkeyPath: path.join(zkeyDir, `${name}.zkey`),
+    vkeyPath: path.join(zkeyDir, `${name}.vkey.json`),
+  };
+}
+
+/**
+ * Load artifact from local compiled circuits
+ */
+function getLocalArtifact(nullifiers: number, commitments: number): Artifact {
+  const { wasmPath, zkeyPath, vkeyPath } = getLocalArtifactPaths(nullifiers, commitments);
 
   // Check files exist
   if (!fs.existsSync(wasmPath)) {
@@ -368,4 +384,7 @@ export {
   listArtifacts,
   listTestingSubsetArtifacts,
   loadArtifacts,
+  getLocalArtifactPaths,
+  USE_LOCAL_CIRCUITS,
+  LOCAL_CIRCUITS_PATH,
 };
