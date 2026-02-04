@@ -33,3 +33,6 @@ scripts/ephemeral
 node.out
 deployments.json
 .env
+
+# Local circuit artifacts (extracted for yarn link)
+.local-circuits-package
