@@ -29,7 +29,7 @@ contract Commitments is Initializable {
   mapping(bytes32 => bool) public nullifiers;
 
   // The tree depth (16 levels = 2^16 = 65,536 UTXOs)
-  uint256 internal constant TREE_DEPTH = 16;
+  uint256 internal constant TREE_DEPTH = 32;
 
   // Tree zero value
   bytes32 public constant ZERO_VALUE = bytes32(uint256(keccak256("Railgun")) % SNARK_SCALAR_FIELD);

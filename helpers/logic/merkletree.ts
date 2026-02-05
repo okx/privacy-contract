@@ -113,7 +113,7 @@ class MerkleTree {
    * @param depth - tree depth
    * @returns tree
    */
-  static async createTree(treeNumber = 0, depth = 16): Promise<MerkleTree> {
+  static async createTree(treeNumber = 0, depth = 32): Promise<MerkleTree> {
     const zeros: Uint8Array[] = await MerkleTree.getZeroValueLevels(depth);
     const tree: Uint8Array[][] = Array(depth)
       .fill(0)

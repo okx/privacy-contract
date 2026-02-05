@@ -154,7 +154,7 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
       25n,
       relayAdaptProxy.address, // RelayAdapt address
       deployer.address,
-      { gasLimit: 2000000 },
+      { gasLimit: 4000000 },
     )
   ).wait();
 
