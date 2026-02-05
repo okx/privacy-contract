@@ -23,7 +23,7 @@ import {
 } from '../../helpers/global/bytes';
 
 /** Must match Commitments.sol ROOT_HISTORY_SIZE (lazy root: proof uses next slot) */
-const ROOT_HISTORY_SIZE = 600;
+const ROOT_HISTORY_SIZE = 100;
 
 describe('Adapt/Relay', () => {
   /**
@@ -204,6 +204,7 @@ describe('Adapt/Relay', () => {
           .map(() =>
             dummyTransact(
               merkletree,
+              0, // treeNumber = 0
               0, // rootIndex = 0 (initial root)
               arrayToBigInt(randomBytes(5)),
               UnshieldType.NONE,
@@ -853,6 +854,7 @@ describe('Adapt/Relay', () => {
     const transactionsWrongAdaptID = [
       await dummyTransact(
         merkletree,
+        0, // treeNumber = 0
         proofRootIndex,
         0n,
         UnshieldType.NONE,
@@ -864,7 +866,7 @@ describe('Adapt/Relay', () => {
       ),
     ];
 
-    const transactions = await transactWithAdaptParams(merkletree, proofRootIndex, actionData, [
+    const transactions = await transactWithAdaptParams(merkletree, 0, proofRootIndex, actionData, [
       {
         minGasPrice: 0n,
         unshield: UnshieldType.NONE,
@@ -920,6 +922,7 @@ describe('Adapt/Relay', () => {
     const transactionsSnarkBypass = [
       await dummyTransact(
         merkletree,
+        0, // treeNumber = 0
         proofRootIndexAfterRelay,
         0n,
         UnshieldType.NONE,
