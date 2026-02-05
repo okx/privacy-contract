@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Parse arguments
+FORCE_CLEAN=false
+for arg in "$@"; do
+    case $arg in
+        --force) FORCE_CLEAN=true ;;
+    esac
+done
+
 # Copy .env.demo to .env if .env does not exist
 [ ! -f ".env" ] && cp .env.example .env
 # Export all variables from .env
@@ -34,13 +42,21 @@ if [ "$USE_LOCAL_CIRCUITS" = "true" ]; then
     
     echo "📦 Linking LOCAL circuit artifacts..."
     
-    # Extract tgz to local directory
+    # Clear rapidsnark cache only with --force (use when circuits change)
+    if [ "$FORCE_CLEAN" = "true" ]; then
+        CACHE_DIR="${TMPDIR:-/tmp}/rapidsnark-artifacts"
+        echo "🗑️  Clearing rapidsnark cache (--force)"
+        rm -rf "$CACHE_DIR" /tmp/rapidsnark-artifacts 2>/dev/null || true
+    fi
+    
+    # Extract fresh copy from tgz
     rm -rf "$LOCAL_PKG_DIR"
     mkdir -p "$LOCAL_PKG_DIR"
     tar -xzf "$LOCAL_TGZ" -C "$LOCAL_PKG_DIR" --strip-components=1
     
-    # Register the local package globally
+    # Register package globally (unlink first to replace old registration)
     pushd "$LOCAL_PKG_DIR" > /dev/null
+    yarn unlink 2>/dev/null || true
     yarn link
     popd > /dev/null
     
