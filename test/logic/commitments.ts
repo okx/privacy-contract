@@ -112,23 +112,23 @@ describe('Logic/Commitments', () => {
   it('Should handle tree capacity and create new tree', async function () {
     const { commitments } = await loadFixture(deploy);
 
-    // Set next leaf index to one less than filled tree (16 levels = 2^16 capacity)
-    await commitments.setNextLeafIndex(2 ** 16 - 2);
+    // Set next leaf index to one less than filled tree (24 levels = 2^24 capacity)
+    await commitments.setNextLeafIndex(2 ** 24 - 2);
 
-    // Check the insertion info (should be tree 0, index 2^16 - 2)
+    // Check the insertion info (should be tree 0, index 2^24 - 2)
     let [treeNum, startIdx] = await commitments.getInsertionTreeNumberAndStartingIndex(1);
     expect(treeNum).to.equal(0);
-    expect(startIdx).to.equal(2 ** 16 - 2);
+    expect(startIdx).to.equal(2 ** 24 - 2);
 
     // Insert leaf hash
     await commitments.insertLeavesStub([randomBytes(32)]);
 
-    // Check the insertion info (should be tree 0, index 2^16 - 1)
+    // Check the insertion info (should be tree 0, index 2^24 - 1)
     [treeNum, startIdx] = await commitments.getInsertionTreeNumberAndStartingIndex(1);
     expect(treeNum).to.equal(0);
-    expect(startIdx).to.equal(2 ** 16 - 1);
+    expect(startIdx).to.equal(2 ** 24 - 1);
 
-    // Insert leaf hash (tree is now full, nextLeafIndex = 2^16)
+    // Insert leaf hash (tree is now full, nextLeafIndex = 2^24)
     await commitments.insertLeavesStub([randomBytes(32)]);
 
     // Now inserting should trigger new tree creation
