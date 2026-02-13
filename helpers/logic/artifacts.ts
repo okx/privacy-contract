@@ -283,16 +283,24 @@ function testingSubsetArtifacts(): (undefined | (undefined | FormattedArtifact)[
  * @returns complete
  */
 async function loadArtifacts(verifierContract: Verifier, artifactList: ArtifactConfig[]) {
-  for (const artifactConfig of artifactList) {
+  // Get base nonce and manually increment to avoid nonce collisions
+  const signer = verifierContract.signer;
+  const baseNonce = await signer.getTransactionCount('pending');
+
+  // Fire all setVerificationKey txs concurrently with explicit nonces
+  const txPromises = artifactList.map(async (artifactConfig, i) => {
     const artifact = getKeys(artifactConfig.nullifiers, artifactConfig.commitments);
-    await (
-      await verifierContract.setVerificationKey(
-        artifactConfig.nullifiers,
-        artifactConfig.commitments,
-        artifact.solidityVKey,
-      )
-    ).wait();
-  }
+    const tx = await verifierContract.setVerificationKey(
+      artifactConfig.nullifiers,
+      artifactConfig.commitments,
+      artifact.solidityVKey,
+      { nonce: baseNonce + i },
+    );
+    return tx;
+  });
+  const txs = await Promise.all(txPromises);
+  // Wait for all confirmations in parallel
+  await Promise.all(txs.map((tx) => tx.wait()));
 }
 
 const listArtifacts = artifacts.listArtifacts;

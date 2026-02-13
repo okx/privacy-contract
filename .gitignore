@@ -36,3 +36,9 @@ deployments.json
 
 # Local circuit artifacts (extracted for yarn link)
 .local-circuits-package
+
+# Benchmark artifacts
+bench-tree.json
+bench-proofs.json
+bench-result*.out
+.bench-hashes.tmp
