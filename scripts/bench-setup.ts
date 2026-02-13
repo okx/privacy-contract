@@ -11,17 +11,20 @@ import { ethers } from 'hardhat';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
+import { fork, ChildProcess } from 'child_process';
 import { Wallet } from '../helpers/logic/wallet';
-import { Note, TokenType, TokenData } from '../helpers/logic/note';
-import { randomBytes } from '../helpers/global/crypto';
-import { arrayToHexString, hexStringToArray } from '../helpers/global/bytes';
+import { Note, TokenType, TokenData, getTokenID } from '../helpers/logic/note';
+import { randomBytes, hash as cryptoHash } from '../helpers/global/crypto';
+import { arrayToHexString, hexStringToArray, bigIntToArray } from '../helpers/global/bytes';
 import { MerkleTree } from '../helpers/logic/merkletree';
-import { transact, UnshieldType, PublicInputs } from '../helpers/logic/transaction';
+import { getKeys } from '../helpers/logic/artifacts';
 
 // ============ Configuration (from .env) ============
-const BENCH_WALLETS = parseInt(process.env.BENCH_WALLETS || '4', 10);
-const BENCH_TOTAL_TXS = parseInt(process.env.BENCH_TOTAL_TXS || '20', 10);
-const BENCH_TXS_PER_RELAY = parseInt(process.env.BENCH_TXS_PER_RELAY || '1', 10);
+const BENCH_USERS = parseInt(process.env.BENCH_USERS || '4', 10);
+const BENCH_TOTAL_UOP = parseInt(process.env.BENCH_TOTAL_UOP || '20', 10);
+const BENCH_BATCH_COUNT = parseInt(process.env.BENCH_BATCH_COUNT || '1', 10);
+const BENCH_BROADCASTER_COUNT = parseInt(process.env.BENCH_BROADCASTER_COUNT || '1', 10);
 
 // ============ Internal constants ============
 const INPUTS_PER_TX = 2;
@@ -31,7 +34,7 @@ const SHIELD_BATCH_SIZE = 50;
 const ROOT_HISTORY_SIZE = 600;
 
 // Auto-calculate notes needed per wallet
-const NOTES_PER_WALLET = Math.ceil((BENCH_TOTAL_TXS * INPUTS_PER_TX) / BENCH_WALLETS) + 2;
+const NOTES_PER_WALLET = Math.ceil((BENCH_TOTAL_UOP * INPUTS_PER_TX) / BENCH_USERS) + 2;
 
 // EIP-712 types for DelegateShield
 const DELEGATE_SHIELD_TYPES = {
@@ -167,48 +170,12 @@ function toHex(arr: Uint8Array): string {
   return arrayToHexString(arr, true);
 }
 
-function bigintToStr(n: bigint): string {
-  return n.toString();
-}
+// ============ Broadcaster key derivation ============
 
-function serializePublicInputs(pi: PublicInputs): any {
-  return {
-    proof: {
-      a: { x: bigintToStr(pi.proof.a.x), y: bigintToStr(pi.proof.a.y) },
-      b: {
-        x: [bigintToStr(pi.proof.b.x[0]), bigintToStr(pi.proof.b.x[1])],
-        y: [bigintToStr(pi.proof.b.y[0]), bigintToStr(pi.proof.b.y[1])],
-      },
-      c: { x: bigintToStr(pi.proof.c.x), y: bigintToStr(pi.proof.c.y) },
-    },
-    merkleRoot: toHex(pi.merkleRoot),
-    rootIndex: pi.rootIndex,
-    nullifiers: pi.nullifiers.map(toHex),
-    commitments: pi.commitments.map(toHex),
-    boundParams: {
-      minGasPrice: bigintToStr(pi.boundParams.minGasPrice),
-      unshield: pi.boundParams.unshield,
-      chainID: bigintToStr(pi.boundParams.chainID),
-      adaptContract: pi.boundParams.adaptContract,
-      adaptParams: toHex(pi.boundParams.adaptParams),
-      commitmentCiphertext: pi.boundParams.commitmentCiphertext.map((cc) => ({
-        ciphertext: cc.ciphertext.map(toHex),
-        blindedSenderViewingKey: toHex(cc.blindedSenderViewingKey),
-        blindedReceiverViewingKey: toHex(cc.blindedReceiverViewingKey),
-        annotationData: toHex(cc.annotationData),
-        memo: toHex(cc.memo),
-      })),
-    },
-    unshieldPreimage: {
-      npk: toHex(pi.unshieldPreimage.npk),
-      token: {
-        tokenType: pi.unshieldPreimage.token.tokenType,
-        tokenAddress: pi.unshieldPreimage.token.tokenAddress,
-        tokenSubID: bigintToStr(pi.unshieldPreimage.token.tokenSubID),
-      },
-      value: bigintToStr(pi.unshieldPreimage.value),
-    },
-  };
+function deriveBroadcasterKey(masterKey: string, index: number): string {
+  return '0x' + crypto.createHash('sha256')
+    .update(masterKey + '_bench_broadcaster_' + index)
+    .digest('hex');
 }
 
 // ============ Main ============
@@ -217,9 +184,10 @@ async function main() {
   console.log('============================================');
   console.log('  Bench Setup: Wallets + Shield + Proofs');
   console.log('============================================');
-  console.log(`  Wallets: ${BENCH_WALLETS}`);
-  console.log(`  Total TXs: ${BENCH_TOTAL_TXS}`);
-  console.log(`  TXs per relay: ${BENCH_TXS_PER_RELAY}`);
+  console.log(`  Users: ${BENCH_USERS}`);
+  console.log(`  Total UOps: ${BENCH_TOTAL_UOP}`);
+  console.log(`  Batch count: ${BENCH_BATCH_COUNT}`);
+  console.log(`  Broadcasters: ${BENCH_BROADCASTER_COUNT}`);
   console.log(`  Circuit: ${INPUTS_PER_TX}-in / ${OUTPUTS_PER_TX}-out`);
   console.log('============================================\n');
 
@@ -253,6 +221,24 @@ async function main() {
     if (balance.lt(MIN_ETH)) {
       console.log(`Funding ${name} with 10 ETH...`);
       await (await deployer.sendTransaction({ to: account.address, value: ethers.utils.parseEther('10') })).wait();
+    }
+  }
+
+  // Fund N bench broadcaster wallets (for multi-broadcaster submit)
+  const masterKey = process.env.PRIVATE_KEY!;
+  if (BENCH_BROADCASTER_COUNT > 0) {
+    console.log(`\nFunding ${BENCH_BROADCASTER_COUNT} bench broadcaster wallet(s)...`);
+    const fundAmount = ethers.utils.parseEther('100');
+    for (let i = 0; i < BENCH_BROADCASTER_COUNT; i++) {
+      const bKey = deriveBroadcasterKey(masterKey, i);
+      const bWallet = new ethers.Wallet(bKey, ethers.provider);
+      const bal = await bWallet.getBalance();
+      if (bal.lt(MIN_ETH)) {
+        await (await deployer.sendTransaction({ to: bWallet.address, value: fundAmount })).wait();
+        console.log(`  Broadcaster ${i}: ${bWallet.address} funded with 100 ETH`);
+      } else {
+        console.log(`  Broadcaster ${i}: ${bWallet.address} already funded (${ethers.utils.formatEther(bal)} ETH)`);
+      }
     }
   }
 
@@ -291,16 +277,16 @@ async function main() {
   }
 
   // Create fresh wallets
-  console.log(`\nCreating ${BENCH_WALLETS} wallets...`);
+  console.log(`\nCreating ${BENCH_USERS} wallets...`);
   const wallets: Wallet[] = [];
-  for (let i = 0; i < BENCH_WALLETS; i++) {
+  for (let i = 0; i < BENCH_USERS; i++) {
     const w = new Wallet(randomBytes(32), randomBytes(32));
     w.tokens.push(tokenData);
     wallets.push(w);
   }
 
   // Mint tokens if needed
-  const totalNotes = BENCH_WALLETS * NOTES_PER_WALLET;
+  const totalNotes = BENCH_USERS * NOTES_PER_WALLET;
   const totalTokensNeeded = NOTE_VALUE * BigInt(totalNotes);
   const userBalance = await testERC20.balanceOf(user.address);
   if (userBalance.lt(totalTokensNeeded)) {
@@ -316,7 +302,7 @@ async function main() {
   }
 
   // Shield notes for each wallet (parallel pipeline)
-  console.log(`\nShielding ${NOTES_PER_WALLET} notes x ${BENCH_WALLETS} wallets = ${totalNotes} notes...`);
+  console.log(`\nShielding ${NOTES_PER_WALLET} notes x ${BENCH_USERS} wallets = ${totalNotes} notes...`);
   const chainId = (await ethers.provider.getNetwork()).chainId;
   const domain = {
     name: 'RelayAdapt',
@@ -338,7 +324,7 @@ async function main() {
   let contractNonceOffset = 0;
   const baseContractNonce = await relayAdapt.getNonce(user.address);
 
-  for (let walletIdx = 0; walletIdx < BENCH_WALLETS; walletIdx++) {
+  for (let walletIdx = 0; walletIdx < BENCH_USERS; walletIdx++) {
     const wallet = wallets[walletIdx];
     const walletNotes: Note[] = [];
     for (let i = 0; i < NOTES_PER_WALLET; i++) {
@@ -356,69 +342,277 @@ async function main() {
   }
   console.log(`  ${allShieldBatches.length} shield batches prepared (batch size up to ${SHIELD_BATCH_SIZE})`);
 
-  // Step 2: Encrypt + sign all batches in parallel
-  console.log('  Encrypting & signing...');
-  const preparedBatches = await Promise.all(
-    allShieldBatches.map(async (batch) => {
-      const shieldRequests = await Promise.all(batch.notes.map((n) => n.encryptForShield()));
-      const delegateShieldRequests = [];
-      const signatures = [];
-      for (let i = 0; i < shieldRequests.length; i++) {
-        const req = shieldRequests[i];
-        const nonce = batch.contractNonceStart.add(i);
-        const message = {
-          npk: req.preimage.npk,
-          tokenAddress: req.preimage.token.tokenAddress,
-          tokenType: req.preimage.token.tokenType,
-          tokenSubID: req.preimage.token.tokenSubID,
-          value: req.preimage.value,
-          encryptedBundle0: req.ciphertext.encryptedBundle[0],
-          encryptedBundle1: req.ciphertext.encryptedBundle[1],
-          encryptedBundle2: req.ciphertext.encryptedBundle[2],
-          shieldKey: req.ciphertext.shieldKey,
-          from: user.address,
-          nonce,
-          deadline,
-        };
-        signatures.push(await user._signTypedData(domain, DELEGATE_SHIELD_TYPES, message));
-        delegateShieldRequests.push({ shieldRequest: req, from: user.address, nonce, deadline });
-      }
-      return { delegateShieldRequests, signatures, walletIdx: batch.walletIdx };
-    }),
-  );
+  // Step 2: Encrypt + sign all batches using worker threads (multi-core)
+  const workerCount = Math.min(os.cpus().length, allShieldBatches.length);
+  console.log(`  Encrypting & signing (${workerCount} workers, ${totalNotes} notes)...`);
+
+  // Derive user private key (same derivation as hardhat.config.ts)
+  const userPrivateKey = '0x' + crypto.createHash('sha256').update(masterKey + '_user').digest('hex');
+
+  // Serialize batches for IPC transfer (all values must be JSON-safe)
+  const serializedBatches = allShieldBatches.map((batch) => ({
+    walletIdx: batch.walletIdx,
+    notes: batch.notes.map((n) => ({
+      spendingKey: '0x' + Array.from(n.spendingKey).map((b) => b.toString(16).padStart(2, '0')).join(''),
+      viewingKey: '0x' + Array.from(n.viewingKey).map((b) => b.toString(16).padStart(2, '0')).join(''),
+      value: n.value.toString(),
+      random: '0x' + Array.from(n.random).map((b) => b.toString(16).padStart(2, '0')).join(''),
+      tokenType: n.tokenData.tokenType,
+      tokenAddress: n.tokenData.tokenAddress,
+      tokenSubID: n.tokenData.tokenSubID.toString(),
+    })),
+    nonceStart: batch.contractNonceStart.toHexString(),
+  }));
+
+  // Split batches into worker groups (round-robin for balanced load)
+  const workerGroups: typeof serializedBatches[] = Array.from({ length: workerCount }, () => []);
+  for (let i = 0; i < serializedBatches.length; i++) {
+    workerGroups[i % workerCount].push(serializedBatches[i]);
+  }
+
+  // Track original batch order: workerGroups[wIdx][localIdx] came from serializedBatches[originalIdx]
+  const batchOrder: { wIdx: number; localIdx: number }[] = [];
+  const localCounters = new Array(workerCount).fill(0);
+  for (let i = 0; i < serializedBatches.length; i++) {
+    const wIdx = i % workerCount;
+    batchOrder.push({ wIdx, localIdx: localCounters[wIdx] });
+    localCounters[wIdx]++;
+  }
+
+  // Resolve worker path with ts-node support
+  const workerPath = path.join(__dirname, 'bench-worker.ts');
+  const tsNodeArgs = process.execArgv.some((a) => a.includes('ts-node'))
+    ? process.execArgv
+    : ['--require', 'ts-node/register/transpile-only', ...process.execArgv];
+
+  // Spawn child processes
+  const workerResults: any[][] = new Array(workerCount);
+  const workerNotesDone: number[] = new Array(workerCount).fill(0);
+
+  const workerPromises = workerGroups.map((group, wIdx) => {
+    return new Promise<void>((resolve, reject) => {
+      const child: ChildProcess = fork(workerPath, [], { execArgv: tsNodeArgs });
+
+      child.on('message', (msg: any) => {
+        if (msg.type === 'ready') {
+          // Child is ready, send the work
+          child.send({
+            type: 'init',
+            data: {
+              mode: 'shield',
+              batches: group,
+              domain,
+              types: DELEGATE_SHIELD_TYPES,
+              userPrivateKey,
+              userAddress: user.address,
+              deadline,
+              workerId: wIdx,
+            },
+          });
+        } else if (msg.type === 'progress') {
+          workerNotesDone[wIdx] = msg.notesDone;
+          const totalDone = workerNotesDone.reduce((a, b) => a + b, 0);
+          if (totalDone % 500 < SHIELD_BATCH_SIZE || msg.notesDone === group.reduce((s: number, b: any) => s + b.notes.length, 0)) {
+            console.log(`    Progress: ${totalDone}/${totalNotes} notes encrypted & signed`);
+          }
+        } else if (msg.type === 'done') {
+          workerResults[wIdx] = msg.results;
+          child.kill();
+          resolve();
+        } else if (msg.type === 'error') {
+          child.kill();
+          reject(new Error(`Worker ${wIdx}: ${msg.error}`));
+        }
+      });
+
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code !== 0 && !workerResults[wIdx]) {
+          reject(new Error(`Worker ${wIdx} exited with code ${code}`));
+        }
+      });
+    });
+  });
+
+  await Promise.all(workerPromises);
+  console.log('  All workers complete');
+
+  // Reassemble results in original batch order (convert hex strings back to Uint8Array/BigInt)
+  const preparedBatches = batchOrder.map(({ wIdx, localIdx }) => {
+    const wr = workerResults[wIdx][localIdx];
+    return {
+      delegateShieldRequests: wr.delegateShieldRequests.map((d: any) => ({
+        shieldRequest: {
+          preimage: {
+            npk: hexStringToArray(d.shieldRequest.preimage.npk),
+            token: {
+              tokenType: d.shieldRequest.preimage.token.tokenType,
+              tokenAddress: d.shieldRequest.preimage.token.tokenAddress,
+              tokenSubID: BigInt(d.shieldRequest.preimage.token.tokenSubID),
+            },
+            value: BigInt(d.shieldRequest.preimage.value),
+          },
+          ciphertext: {
+            encryptedBundle: d.shieldRequest.ciphertext.encryptedBundle.map(
+              (h: string) => hexStringToArray(h),
+            ),
+            shieldKey: hexStringToArray(d.shieldRequest.ciphertext.shieldKey),
+          },
+        },
+        from: d.from,
+        nonce: ethers.BigNumber.from(d.nonce),
+        deadline: d.deadline,
+      })),
+      signatures: wr.signatures,
+      walletIdx: wr.walletIdx,
+    };
+  });
   console.log('  All batches encrypted & signed');
 
-  // Step 3: Submit all delegateShield calls with managed broadcaster nonces
+  // Step 3+4: Submit delegateShield calls in chunks to avoid txpool overflow
   const SHIELD_GAS_LIMIT = 15_000_000;
-  console.log('  Submitting all shield txs...');
-  const shieldBaseTxNonce = await broadcaster.getTransactionCount('pending');
-  const shieldTxResponses = await Promise.all(
-    preparedBatches.map(async (p, i) => {
-      return relayAdapt.connect(broadcaster).delegateShield(
-        p.delegateShieldRequests,
-        p.signatures,
-        { nonce: shieldBaseTxNonce + i, gasLimit: SHIELD_GAS_LIMIT },
+  const SHIELD_SUBMIT_CHUNK = 200; // max txs to submit before waiting for confirmations
+  console.log(`  Submitting ${preparedBatches.length} shield txs (chunk size: ${SHIELD_SUBMIT_CHUNK})...`);
+
+  // Wait until no pending transactions remain for broadcaster (avoid nonce conflicts from previous runs)
+  {
+    let pendingCount = await broadcaster.getTransactionCount('pending');
+    let latestCount = await broadcaster.getTransactionCount('latest');
+    if (pendingCount !== latestCount) {
+      console.log(`  Waiting for ${pendingCount - latestCount} pending broadcaster txs to clear...`);
+      while (pendingCount !== latestCount) {
+        await new Promise((r) => setTimeout(r, 2000));
+        pendingCount = await broadcaster.getTransactionCount('pending');
+        latestCount = await broadcaster.getTransactionCount('latest');
+      }
+      console.log('  Pending txs cleared');
+    }
+  }
+
+  const allShieldTxResponses: any[] = [];
+  let shieldNonce = await broadcaster.getTransactionCount('latest');
+
+  // Use explicit gasPrice to avoid replacement-fee issues on chains with EIP-1559
+  const currentGasPrice = await ethers.provider.getGasPrice();
+  const shieldGasPrice = currentGasPrice.mul(2); // 2x to ensure replacement
+
+  for (let chunkStart = 0; chunkStart < preparedBatches.length; chunkStart += SHIELD_SUBMIT_CHUNK) {
+    const chunkEnd = Math.min(chunkStart + SHIELD_SUBMIT_CHUNK, preparedBatches.length);
+    const chunk = preparedBatches.slice(chunkStart, chunkEnd);
+
+    // Fire chunk with manually tracked nonces
+    const chunkBaseNonce = shieldNonce;
+    const txResponses = await Promise.all(
+      chunk.map(async (p, i) => {
+        return relayAdapt.connect(broadcaster).delegateShield(
+          p.delegateShieldRequests,
+          p.signatures,
+          { nonce: chunkBaseNonce + i, gasLimit: SHIELD_GAS_LIMIT, gasPrice: shieldGasPrice },
+        );
+      }),
+    );
+    shieldNonce += chunk.length;
+
+    // Wait for confirmations
+    const receipts = await Promise.all(txResponses.map((tx) => tx.wait()));
+    for (const receipt of receipts) {
+      totalShieldGas = totalShieldGas.add(receipt.gasUsed);
+    }
+
+    allShieldTxResponses.push(...txResponses);
+    console.log(`    Confirmed ${chunkEnd}/${preparedBatches.length} shield txs`);
+  }
+
+  // Step 5: Optimized batch scan (bulk insert leaves + rebuild tree once)
+  //   Old approach: scanTX per tx => rebuildSparseTree 1000x
+  //   New approach: collect all leaves, insert once, rebuild once => ~1000x faster for tree
+  console.log('  Scanning shield events...');
+  const scanStart = Date.now();
+
+  // 5a: Fetch all receipts in parallel (already confirmed, so instant)
+  const allReceipts = await Promise.all(allShieldTxResponses.map((tx) => tx.wait()));
+
+  // 5b: Parse all Shield events, compute Poseidon hashes, bulk-insert into tree[0]
+  for (let i = 0; i < allReceipts.length; i++) {
+    const receipt = allReceipts[i];
+    for (const log of receipt.logs) {
+      if (log.address !== railgun.address) continue;
+      const parsedLog = railgun.interface.parseLog(log);
+      if (parsedLog.name !== 'Shield') continue;
+      const args = parsedLog.args as any;
+      const startPosition = args.startPosition.toNumber();
+
+      // Compute Poseidon leaf hash for each commitment
+      const leaves = await Promise.all(
+        args.commitments.map((commitment: any) =>
+          cryptoHash.poseidon([
+            hexStringToArray(commitment.npk),
+            getTokenID({
+              tokenType: commitment.token.tokenType,
+              tokenAddress: commitment.token.tokenAddress,
+              tokenSubID: commitment.token.tokenSubID.toBigInt(),
+            }),
+            bigIntToArray(commitment.value.toBigInt(), 32),
+          ]),
+        ),
       );
+
+      // Direct insert into leaf level (skip rebuildSparseTree)
+      leaves.forEach((leaf: Uint8Array, idx: number) => {
+        merkletree.tree[0][startPosition + idx] = leaf;
+      });
+    }
+  }
+
+  // 5c: Rebuild entire tree ONCE (instead of 1000x)
+  await merkletree.rebuildSparseTree();
+  console.log(`  Tree rebuilt in ${Date.now() - scanStart}ms`);
+
+  // 5d: Scan wallets in parallel (each wallet is independent, no shared state)
+  const walletScanStart = Date.now();
+  await Promise.all(
+    wallets.map(async (wallet, wIdx) => {
+      for (let i = 0; i < allReceipts.length; i++) {
+        if (allShieldBatches[i].walletIdx !== wIdx) continue;
+        const receipt = allReceipts[i];
+        for (const log of receipt.logs) {
+          if (log.address !== railgun.address) continue;
+          const parsedLog = railgun.interface.parseLog(log);
+          if (parsedLog.name !== 'Shield') continue;
+          const args = parsedLog.args as any;
+          const startPosition = args.startPosition.toNumber();
+
+          args.shieldCiphertext.map((shieldCiphertext: any, index: number) => {
+            const decrypted = Note.decryptShield(
+              hexStringToArray(shieldCiphertext.shieldKey),
+              shieldCiphertext.encryptedBundle.map(hexStringToArray) as [
+                Uint8Array,
+                Uint8Array,
+                Uint8Array,
+              ],
+              {
+                tokenType: args.commitments[index].token.tokenType,
+                tokenAddress: args.commitments[index].token.tokenAddress,
+                tokenSubID: args.commitments[index].token.tokenSubID.toBigInt(),
+              },
+              args.commitments[index].value.toBigInt(),
+              wallet.viewingKey,
+              wallet.spendingKey,
+            );
+            if (decrypted) {
+              wallet.notes[startPosition + index] = decrypted;
+            }
+          });
+        }
+      }
     }),
   );
+  console.log(`  Wallets scanned in ${Date.now() - walletScanStart}ms`);
 
-  // Step 4: Wait for all receipts
-  console.log(`  Waiting for ${shieldTxResponses.length} confirmations...`);
-  const shieldReceipts = await Promise.all(shieldTxResponses.map((tx) => tx.wait()));
-  for (const receipt of shieldReceipts) {
-    totalShieldGas = totalShieldGas.add(receipt.gasUsed);
-  }
-
-  // Step 5: Scan all TXs sequentially (order matters for merkle tree)
-  console.log('  Scanning shield events...');
-  for (let i = 0; i < shieldTxResponses.length; i++) {
-    const wIdx = allShieldBatches[i].walletIdx;
-    await merkletree.scanTX(shieldTxResponses[i], railgun);
-    await wallets[wIdx].scanTX(shieldTxResponses[i], railgun);
-  }
-
-  for (let i = 0; i < BENCH_WALLETS; i++) {
-    console.log(`  Wallet ${i}: ${wallets[i].notes.filter(Boolean).length} notes shielded`);
+  for (let i = 0; i < BENCH_USERS; i++) {
+    if (i % 100 === 0 || i === BENCH_USERS - 1) {
+      console.log(`  Wallet ${i}: ${wallets[i].notes.filter(Boolean).length} notes shielded`);
+    }
   }
 
   const setupEnd = Date.now();
@@ -443,13 +637,15 @@ async function main() {
   for (let i = 0; i < wallets.length; i++) {
     const unspent = await wallets[i].getUnspentNotes(merkletree, tokenData);
     unspentNotesPerWallet.push(unspent);
-    console.log(`  Wallet ${i}: ${unspent.length} unspent notes`);
+    if (i % 100 === 0 || i === wallets.length - 1) {
+      console.log(`  Wallet ${i}: ${unspent.length} unspent notes`);
+    }
   }
 
   // Generate transfer pairs
   const pairs = generateTransferPairs(
     wallets.length,
-    BENCH_TOTAL_TXS,
+    BENCH_TOTAL_UOP,
     unspentNotesPerWallet.map((n) => n.length),
   );
   const actualTxCount = pairs.length;
@@ -461,10 +657,10 @@ async function main() {
 
   // Group into relay batches
   const relayBatches: TransferPair[][] = [];
-  for (let i = 0; i < actualTxCount; i += BENCH_TXS_PER_RELAY) {
-    relayBatches.push(pairs.slice(i, i + BENCH_TXS_PER_RELAY));
+  for (let i = 0; i < actualTxCount; i += BENCH_BATCH_COUNT) {
+    relayBatches.push(pairs.slice(i, i + BENCH_BATCH_COUNT));
   }
-  console.log(`Relay batches: ${relayBatches.length} (${BENCH_TXS_PER_RELAY} tx/batch)`);
+  console.log(`Relay batches: ${relayBatches.length} (${BENCH_BATCH_COUNT} UOp/batch)`);
 
   // Prepare inputs/outputs for all batches
   interface BatchData {
@@ -475,40 +671,169 @@ async function main() {
   }
 
   console.log('\nPreparing batch data (adaptParams)...');
-  const batchDataList: BatchData[] = await Promise.all(
-    relayBatches.map(async (batch) => {
-      const inputNotesList: Note[][] = [];
-      const outputNotesList: Note[][] = [];
+  const batchPrepStart = Date.now();
 
-      for (const pair of batch) {
-        const receiver = wallets[pair.receiverIdx];
-        const senderUnspent = unspentNotesPerWallet[pair.senderIdx];
-        const inputNotes = pair.inputNoteIndices.map((idx) => senderUnspent[idx]);
-        const inputTotal = inputNotes.reduce((sum, n) => sum + n.value, 0n);
-        const perNote = inputTotal / BigInt(OUTPUTS_PER_TX);
-        const remainder = inputTotal % BigInt(OUTPUTS_PER_TX);
+  // Step A: Pre-compute all unique note hashes & nullifiers using multi-process workers
+  //   Each Poseidon hash is CPU-bound; distribute across all CPU cores for ~Nx speedup
 
-        const outputNotes: Note[] = [];
-        for (let j = 0; j < OUTPUTS_PER_TX; j++) {
-          outputNotes.push(
-            new Note(receiver.spendingKey, receiver.viewingKey, j === 0 ? perNote + remainder : perNote, randomBytes(16), tokenData, ''),
-          );
-        }
-        inputNotesList.push(inputNotes);
-        outputNotesList.push(outputNotes);
+  // A1: Collect unique notes and assign IDs
+  const uniqueNotes: Note[] = [];
+  const noteToId = new Map<Note, number>();
+  for (const pair of pairs) {
+    const senderUnspent = unspentNotesPerWallet[pair.senderIdx];
+    for (const noteIdx of pair.inputNoteIndices) {
+      const note = senderUnspent[noteIdx];
+      if (!noteToId.has(note)) {
+        noteToId.set(note, uniqueNotes.length);
+        uniqueNotes.push(note);
       }
+    }
+  }
+  console.log(`  ${uniqueNotes.length} unique notes to hash`);
 
-      const actionData = {
-        random: ethers.utils.hexlify(randomBytes(31)),
-        requireSuccess: true,
-        minGasLimit: 0,
-        calls: [] as { to: string; data: string; value: any }[],
-      };
-      const adaptParams = await calculateBatchAdaptParams(merkletree, inputNotesList, actionData);
-      return { inputNotesList, outputNotesList, adaptParams, actionData };
-    }),
-  );
-  console.log(`  ${batchDataList.length} batches prepared`);
+  // A2: Build hashToIndex lookup from tree[0] (leaf level)
+  const hashToIndex: Record<string, number> = {};
+  for (let i = 0; i < merkletree.tree[0].length; i++) {
+    if (merkletree.tree[0][i]) {
+      hashToIndex[arrayToHexString(merkletree.tree[0][i], true)] = i;
+    }
+  }
+
+  // A3: Serialize note tasks for IPC
+  const noteTasks = uniqueNotes.map((note, id) => ({
+    id,
+    spendingKey: arrayToHexString(note.spendingKey, true),
+    viewingKey: arrayToHexString(note.viewingKey, true),
+    value: note.value.toString(),
+    random: arrayToHexString(note.random, true),
+    tokenType: note.tokenData.tokenType,
+    tokenAddress: note.tokenData.tokenAddress,
+    tokenSubID: note.tokenData.tokenSubID.toString(),
+  }));
+
+  // A4: Fork workers and distribute tasks
+  const nullWorkerCount = Math.min(os.cpus().length, uniqueNotes.length);
+  console.log(`  Hashing with ${nullWorkerCount} workers...`);
+
+  const nullWorkerPath = path.join(__dirname, 'bench-worker.ts');
+  const chunkSize = Math.ceil(noteTasks.length / nullWorkerCount);
+  const nullWorkerDone: number[] = new Array(nullWorkerCount).fill(0);
+
+  const nullWorkerResults: { id: number; hash: string; nullifier: string }[][] = new Array(nullWorkerCount);
+
+  const nullWorkerPromises = Array.from({ length: nullWorkerCount }, (_, wIdx) => {
+    const myTasks = noteTasks.slice(wIdx * chunkSize, (wIdx + 1) * chunkSize);
+    if (myTasks.length === 0) return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      const child: ChildProcess = fork(nullWorkerPath, [], { execArgv: tsNodeArgs });
+
+      child.on('message', (msg: any) => {
+        if (msg.type === 'ready') {
+          child.send({
+            type: 'init',
+            data: { mode: 'nullifier', tasks: myTasks, hashToIndex, workerId: wIdx },
+          });
+        } else if (msg.type === 'progress') {
+          nullWorkerDone[wIdx] = msg.done;
+          const totalDone = nullWorkerDone.reduce((a, b) => a + b, 0);
+          if (totalDone % 2000 < 500 || msg.done === myTasks.length) {
+            console.log(`    Progress: ${totalDone}/${uniqueNotes.length} note hashes computed`);
+          }
+        } else if (msg.type === 'done') {
+          nullWorkerResults[wIdx] = msg.results;
+          child.kill();
+          resolve();
+        } else if (msg.type === 'error') {
+          child.kill();
+          reject(new Error(`Nullifier worker ${wIdx}: ${msg.error}`));
+        }
+      });
+
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code !== 0 && !nullWorkerResults[wIdx]) {
+          reject(new Error(`Nullifier worker ${wIdx} exited with code ${code}`));
+        }
+      });
+    });
+  });
+
+  await Promise.all(nullWorkerPromises);
+  console.log(`  All nullifier workers complete`);
+
+  // A5: Populate caches from worker results
+  const noteHashCache = new Map<Note, Uint8Array>();
+  const noteNullifierCache = new Map<Note, string>();
+  for (const workerResult of nullWorkerResults) {
+    if (!workerResult) continue;
+    for (const r of workerResult) {
+      const note = uniqueNotes[r.id];
+      noteHashCache.set(note, hexStringToArray(r.hash));
+      noteNullifierCache.set(note, r.nullifier);
+    }
+  }
+  console.log(`  ${noteHashCache.size} hashes + nullifiers cached in ${Date.now() - batchPrepStart}ms`);
+
+  // Step B: Assemble batches using cached values (pure data, no async crypto)
+  const batchDataList: BatchData[] = [];
+  for (let bIdx = 0; bIdx < relayBatches.length; bIdx++) {
+    const batch = relayBatches[bIdx];
+    const inputNotesList: Note[][] = [];
+    const outputNotesList: Note[][] = [];
+
+    for (const pair of batch) {
+      const receiver = wallets[pair.receiverIdx];
+      const senderUnspent = unspentNotesPerWallet[pair.senderIdx];
+      const inputNotes = pair.inputNoteIndices.map((idx) => senderUnspent[idx]);
+      const inputTotal = inputNotes.reduce((sum, n) => sum + n.value, 0n);
+      const perNote = inputTotal / BigInt(OUTPUTS_PER_TX);
+      const remainder = inputTotal % BigInt(OUTPUTS_PER_TX);
+
+      const outputNotes: Note[] = [];
+      for (let j = 0; j < OUTPUTS_PER_TX; j++) {
+        outputNotes.push(
+          new Note(receiver.spendingKey, receiver.viewingKey, j === 0 ? perNote + remainder : perNote, randomBytes(16), tokenData, ''),
+        );
+      }
+      inputNotesList.push(inputNotes);
+      outputNotesList.push(outputNotes);
+    }
+
+    // Build adaptParams from cached nullifiers (no async Poseidon needed)
+    const nullifiers2D: string[][] = [];
+    for (const inputNotes of inputNotesList) {
+      const txNullifiers: string[] = [];
+      for (const note of inputNotes) {
+        txNullifiers.push(noteNullifierCache.get(note)!);
+      }
+      nullifiers2D.push(txNullifiers);
+    }
+
+    const actionData = {
+      random: ethers.utils.hexlify(randomBytes(31)),
+      requireSuccess: true,
+      minGasLimit: 0,
+      calls: [] as { to: string; data: string; value: any }[],
+    };
+
+    const encoded = ethers.utils.defaultAbiCoder.encode(
+      [
+        'bytes32[][]',
+        'uint256',
+        'tuple(bytes31 random, bool requireSuccess, uint256 minGasLimit, tuple(address to, bytes data, uint256 value)[] calls)',
+      ],
+      [nullifiers2D, inputNotesList.length, actionData],
+    );
+    const adaptParams = new Uint8Array(ethers.utils.arrayify(ethers.utils.keccak256(encoded)));
+
+    batchDataList.push({ inputNotesList, outputNotesList, adaptParams, actionData });
+
+    if ((bIdx + 1) % 200 === 0 || bIdx === relayBatches.length - 1) {
+      console.log(`  Assembled ${bIdx + 1}/${relayBatches.length} batches`);
+    }
+  }
+  console.log(`  ${batchDataList.length} batches prepared in ${Date.now() - batchPrepStart}ms`);
 
   // Flatten all proof tasks across all batches
   interface ProofTask {
@@ -533,84 +858,157 @@ async function main() {
     }
   }
 
-  // Concurrency-limited proof generation
-  const PROOF_CONCURRENCY = Math.max(1, os.cpus().length);
-  console.log(`\nGenerating ${allProofTasks.length} proofs (concurrency: ${PROOF_CONCURRENCY})...`);
-
-  const proofTimings: number[] = new Array(allProofTasks.length);
-  const proofResults: PublicInputs[] = new Array(allProofTasks.length);
-  let proofsDone = 0;
+  // ---- Multi-process full transact (encrypt + circuit inputs + witness + proof + format) ----
+  const PROOF_WORKERS = Math.min(os.cpus().length, allProofTasks.length);
   const proofPhaseStart = Date.now();
+  console.log(`\nGenerating ${allProofTasks.length} proofs (${PROOF_WORKERS} workers, full pipeline)...`);
 
-  // Worker pool pattern: N workers pulling from a shared task queue
-  let taskCursor = 0;
-  const proofWorker = async () => {
-    while (taskCursor < allProofTasks.length) {
-      const idx = taskCursor++;
-      const task = allProofTasks[idx];
-      const txStart = Date.now();
-      proofResults[idx] = await transact(
-        merkletree, rootIndex, 0n, UnshieldType.NONE, chainID,
-        relayAdapt.address, task.adaptParams, task.inputNotes, task.outputNotes,
-      );
-      const elapsed = Date.now() - txStart;
-      proofTimings[idx] = elapsed;
-      proofsDone++;
-      if (proofsDone % 50 === 0 || proofsDone === allProofTasks.length) {
-        console.log(`  ${proofsDone}/${allProofTasks.length} proofs done (last: ${elapsed}ms)`);
-      }
-    }
-  };
+  // Cache artifact files to disk for workers
+  const artifact = getKeys(INPUTS_PER_TX, OUTPUTS_PER_TX);
+  const artifactCacheDir = path.join(os.tmpdir(), 'rapidsnark-artifacts');
+  if (!fs.existsSync(artifactCacheDir)) fs.mkdirSync(artifactCacheDir, { recursive: true });
+  const artCacheKey = `${artifact.wasm.length}_${artifact.zkey.length}`;
+  const artWasmPath = path.join(artifactCacheDir, `${artCacheKey}.wasm`);
+  const artZkeyPath = path.join(artifactCacheDir, `${artCacheKey}.zkey`);
+  if (!fs.existsSync(artWasmPath)) fs.writeFileSync(artWasmPath, artifact.wasm);
+  if (!fs.existsSync(artZkeyPath)) fs.writeFileSync(artZkeyPath, artifact.zkey);
 
-  await Promise.all(
-    Array.from({ length: Math.min(PROOF_CONCURRENCY, allProofTasks.length) }, () => proofWorker()),
-  );
+  // Serialize MerkleTree for workers (sent once per worker)
+  function serializeMerkleTree(mt: MerkleTree) {
+    return {
+      treeNumber: mt.treeNumber,
+      depth: mt.depth,
+      zeros: mt.zeros.map((z: Uint8Array) => toHex(z)),
+      tree: mt.tree.map((level: Uint8Array[]) => {
+        const arr: (string | null)[] = new Array(level.length);
+        for (let i = 0; i < level.length; i++) {
+          arr[i] = level[i] ? toHex(level[i]) : null;
+        }
+        return arr;
+      }),
+    };
+  }
+  const serializedTree = serializeMerkleTree(merkletree);
 
-  // Group proof results back into batches
-  const allBatchTransactions: PublicInputs[][] = batchDataList.map(() => []);
-  for (let i = 0; i < allProofTasks.length; i++) {
-    const task = allProofTasks[i];
-    allBatchTransactions[task.batchIdx][task.txIdx] = proofResults[i];
+  // Serialize Note for IPC
+  function serializeNote(note: Note) {
+    return {
+      spendingKey: toHex(note.spendingKey),
+      viewingKey: toHex(note.viewingKey),
+      value: note.value.toString(),
+      random: toHex(note.random),
+      tokenType: note.tokenData.tokenType,
+      tokenAddress: note.tokenData.tokenAddress,
+      tokenSubID: note.tokenData.tokenSubID.toString(),
+    };
   }
 
+  // Build serialized task list
+  const serializedTasks = allProofTasks.map((task, i) => ({
+    taskId: i,
+    inputNotes: task.inputNotes.map(serializeNote),
+    outputNotes: task.outputNotes.map(serializeNote),
+    adaptParams: toHex(task.adaptParams),
+  }));
+
+  // Distribute tasks evenly to workers
+  const proofChunkSize = Math.ceil(allProofTasks.length / PROOF_WORKERS);
+  const proofWorkerDone: number[] = new Array(PROOF_WORKERS).fill(0);
+  const proofWorkerResults: { taskId: number; serializedPI: any; nullifiers: string[] }[][] = new Array(PROOF_WORKERS);
+  const proofWorkerPath = path.join(__dirname, 'bench-worker.ts');
+
+  const proofWorkerPromises = Array.from({ length: PROOF_WORKERS }, (_, wIdx) => {
+    const startIdx = wIdx * proofChunkSize;
+    const endIdx = Math.min(startIdx + proofChunkSize, allProofTasks.length);
+    const myTasks = serializedTasks.slice(startIdx, endIdx);
+    if (myTasks.length === 0) return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      const child: ChildProcess = fork(proofWorkerPath, [], { execArgv: tsNodeArgs });
+
+      child.on('message', (msg: any) => {
+        if (msg.type === 'ready') {
+          child.send({
+            type: 'init',
+            data: {
+              mode: 'transact',
+              tasks: myTasks,
+              merkletree: serializedTree,
+              rootIndex,
+              chainID: chainID.toString(),
+              adaptContract: relayAdapt.address,
+              wasmPath: artWasmPath,
+              zkeyPath: artZkeyPath,
+              workerId: wIdx,
+            },
+          });
+        } else if (msg.type === 'progress') {
+          proofWorkerDone[wIdx] = msg.done;
+          const totalDone = proofWorkerDone.reduce((a, b) => a + b, 0);
+          if (totalDone % 50 === 0 || msg.done === myTasks.length) {
+            console.log(`  ${totalDone}/${allProofTasks.length} proofs done`);
+          }
+        } else if (msg.type === 'done') {
+          proofWorkerResults[wIdx] = msg.results;
+          child.kill();
+          resolve();
+        } else if (msg.type === 'error') {
+          child.kill();
+          reject(new Error(`Proof worker ${wIdx}: ${msg.error}`));
+        }
+      });
+
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code !== 0 && !proofWorkerResults[wIdx]) {
+          reject(new Error(`Proof worker ${wIdx} exited with code ${code}`));
+        }
+      });
+    });
+  });
+
+  await Promise.all(proofWorkerPromises);
   const proofPhaseTotal = Date.now() - proofPhaseStart;
-  const validTimings = proofTimings.filter((t) => t !== undefined);
-  const avgProof = validTimings.length > 0 ? validTimings.reduce((a, b) => a + b, 0) / validTimings.length : 0;
-  console.log(`\nProof phase: ${proofPhaseTotal}ms total, ${avgProof.toFixed(0)}ms avg, ${Math.min(...validTimings)}ms min, ${Math.max(...validTimings)}ms max`);
+  console.log(`\nProof phase complete: ${proofPhaseTotal}ms (${PROOF_WORKERS} workers)`);
+
+  // Collect results: workers return serialized PublicInputs directly
+  // Build allBatchTransactions (serialized form) and allNullifiers
+  const allBatchSerializedTxs: any[][] = batchDataList.map(() => []);
+  const allNullifiers: string[] = [];
+
+  for (const workerResult of proofWorkerResults) {
+    if (!workerResult) continue;
+    for (const r of workerResult) {
+      const task = allProofTasks[r.taskId];
+      allBatchSerializedTxs[task.batchIdx][task.txIdx] = r.serializedPI;
+      allNullifiers.push(...r.nullifiers);
+    }
+  }
 
   // ========================================================
-  // Serialize and save to bench-proofs.json
+  // Save to bench-proofs.json
   // ========================================================
   console.log('\n--- Saving proofs to bench-proofs.json ---\n');
 
-  // Collect all nullifiers across all proofs (flat list for debugResetBenchState)
-  const allNullifiers: string[] = [];
-  for (const pi of proofResults) {
-    for (const n of pi.nullifiers) {
-      allNullifiers.push(toHex(n));
-    }
-  }
-
   const benchProofs = {
     config: {
-      wallets: BENCH_WALLETS,
-      totalTxs: actualTxCount,
-      txsPerRelay: BENCH_TXS_PER_RELAY,
+      users: BENCH_USERS,
+      totalUop: actualTxCount,
+      batchCount: BENCH_BATCH_COUNT,
+      broadcasterCount: BENCH_BROADCASTER_COUNT,
       inputsPerTx: INPUTS_PER_TX,
       outputsPerTx: OUTPUTS_PER_TX,
     },
     rootIndex,
     root: rootHex,
     nullifiers: allNullifiers,
-    batches: allBatchTransactions.map((batchTxs, batchIdx) => ({
-      transactions: batchTxs.map(serializePublicInputs),
+    batches: allBatchSerializedTxs.map((batchTxs, batchIdx) => ({
+      transactions: batchTxs,
       actionData: batchDataList[batchIdx].actionData,
     })),
     proofStats: {
       totalMs: proofPhaseTotal,
-      avgMs: Math.round(avgProof),
-      minMs: Math.min(...validTimings),
-      maxMs: Math.max(...validTimings),
+      workers: PROOF_WORKERS,
     },
     setupStats: {
       shieldGas: totalShieldGas.toString(),
@@ -623,7 +1021,7 @@ async function main() {
   fs.writeFileSync(proofsPath, JSON.stringify(benchProofs));
   const fileSizeMB = (fs.statSync(proofsPath).size / 1024 / 1024).toFixed(1);
   console.log(`Saved: bench-proofs.json (${fileSizeMB} MB)`);
-  console.log(`  ${allBatchTransactions.length} batches, ${actualTxCount} transactions`);
+  console.log(`  ${allBatchSerializedTxs.length} batches, ${actualTxCount} transactions`);
   console.log(`  ${allNullifiers.length} nullifiers to reset`);
 
   console.log('\n============================================');

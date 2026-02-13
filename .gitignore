@@ -41,4 +41,6 @@ deployments.json
 bench-tree.json
 bench-proofs.json
 bench-result*.out
+bench-result-d*.json
 .bench-hashes.tmp
+.bench-barrier-*

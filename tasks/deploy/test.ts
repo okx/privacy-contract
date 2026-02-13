@@ -159,12 +159,12 @@ task('deploy:test', 'Creates test environment deployment').setAction(async funct
   ).wait();
 
   // Initialize RelayAdapt with RailgunSmartWallet address
-  // broadcaster is set to second account (separate from deployer)
+  // broadcaster = address(0) → permissionless mode (anyone can call relay/delegateShield)
   await (
     await relayAdapt.initialize(
       proxy.address,          // RailgunSmartWallet proxy
       weth9.address,          // WETH
-      broadcaster.address,    // broadcaster (second account)
+      ethers.constants.AddressZero,  // permissionless
       deployer.address,       // owner (deployer)
     )
   ).wait();

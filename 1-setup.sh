@@ -63,7 +63,7 @@ else
 fi
 
 # ===== Clean old benchmark artifacts =====
-rm -f bench-tree.json bench-proofs.json
+rm -f bench-tree.json bench-proofs.json bench-result*.out bench-result-d*.json
 
 # ===== Deploy contracts =====
 echo ""
