@@ -1,0 +1,60 @@
+contracts/logic/EpochNullifierStorage.sol
+  # agent: mock_ai::unknown
+  1c82c09 1-93
+contracts/teststubs/logic/EpochNullifierStorageStub.sol
+  # agent: mock_ai::unknown
+  1c82c09 1-32
+test/logic/epoch-nullifier-benchmark.ts
+  # agent: mock_ai::unknown
+  1c82c09 1-221
+---
+{
+  "metadata": {
+    "base_commit_sha": "5ef92655d346ca0bfb331f124d37d5f5a82676e8",
+    "prompts": {
+      "1c82c09": {
+        "agent_id": {
+          "tool": "mock_ai",
+          "id": "ai-thread-1772095171042207000",
+          "model": "unknown"
+        },
+        "human_name": "xianrui.qin",
+        "human_email": "xianrui.qin@okg.com",
+        "messages": [],
+        "total_additions": 346,
+        "total_deletions": 0,
+        "accepted_lines": 346,
+        "overriden_lines": 0
+      }
+    }
+  },
+  "agent_line_stats": {
+    "contracts/logic/EpochNullifierStorage.sol": {
+      "mock_ai::unknown": {
+        "file_path": "contracts/logic/EpochNullifierStorage.sol",
+        "agent_type": "mock_ai::unknown",
+        "additions": 93,
+        "deletions": 0,
+        "ai_accepted": 0
+      }
+    },
+    "contracts/teststubs/logic/EpochNullifierStorageStub.sol": {
+      "mock_ai::unknown": {
+        "file_path": "contracts/teststubs/logic/EpochNullifierStorageStub.sol",
+        "agent_type": "mock_ai::unknown",
+        "additions": 32,
+        "deletions": 0,
+        "ai_accepted": 0
+      }
+    },
+    "test/logic/epoch-nullifier-benchmark.ts": {
+      "mock_ai::unknown": {
+        "file_path": "test/logic/epoch-nullifier-benchmark.ts",
+        "agent_type": "mock_ai::unknown",
+        "additions": 221,
+        "deletions": 0,
+        "ai_accepted": 0
+      }
+    }
+  }
+}
