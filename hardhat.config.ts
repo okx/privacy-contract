@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { HardhatUserConfig } from 'hardhat/config';
 import '@nomicfoundation/hardhat-chai-matchers';
 import '@nomiclabs/hardhat-ethers';
@@ -12,8 +13,27 @@ import './tasks';
 
 import mocharc from './.mocharc.json';
 
+/**
+ * Derive deterministic child private keys from a master key.
+ * Used to generate broadcaster and user accounts from a single PRIVATE_KEY.
+ */
+function deriveAccounts(masterKey: string): string[] {
+  const derive = (label: string) =>
+    '0x' + crypto.createHash('sha256').update(masterKey + label).digest('hex');
+  return [masterKey, derive('_broadcaster'), derive('_user')];
+}
+
+// Build localhost accounts: [deployer, broadcaster, user]
+const localhostAccounts = process.env.PRIVATE_KEY ? deriveAccounts(process.env.PRIVATE_KEY) : [];
+
 const config: HardhatUserConfig = {
   defaultNetwork: 'hardhat',
+  networks: {
+    localhost: {
+      url: process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545',
+      accounts: localhostAccounts.length > 0 ? localhostAccounts : undefined,
+    },
+  },
   solidity: {
     compilers: [
       {

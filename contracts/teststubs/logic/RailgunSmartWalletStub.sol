@@ -23,4 +23,21 @@ contract RailgunSmartWalletStub is RailgunSmartWallet {
     // For testing: set nullifier status for a specific tree
     Commitments.nullifiers[_treeNumber][_nullifier] = _setting;
   }
+
+  /**
+   * @notice Reset bench state: clear nullifiers and restore merkle root
+   * @param _nullifiers - nullifiers to clear (set to false)
+   * @param _rootIndex - root index to restore
+   * @param _root - root value to write at the given index
+   */
+  function debugResetBenchState(
+    bytes32[] calldata _nullifiers,
+    uint32 _rootIndex,
+    bytes32 _root
+  ) external {
+    for (uint256 i = 0; i < _nullifiers.length; i++) {
+      Commitments.nullifiers[_nullifiers[i]] = false;
+    }
+    Commitments.roots[_rootIndex] = _root;
+  }
 }
