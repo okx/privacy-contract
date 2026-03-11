@@ -89,10 +89,10 @@ describe('Logic/Commitments', () => {
 
     const insertList = [];
     for (let i = 0; i < loops; i += 1) {
-      // Check the insertion numbers
-      expect(
-        await commitments.getStartingIndex(insertList.length),
-      ).to.equal(merkletree.length);
+      // Check the insertion numbers (treeNumber, startingIndex)
+      const [insertionTreeNumber, insertionStartIndex] = await commitments.getInsertionTreeNumberAndStartingIndex(insertList.length);
+      expect(insertionTreeNumber).to.equal(0); // Should be tree 0
+      expect(insertionStartIndex).to.equal(merkletree.length);
 
       // Update with insert list on local and contract
       await commitments.insertLeavesStub(insertList);
@@ -109,27 +109,39 @@ describe('Logic/Commitments', () => {
     }
   });
 
-  it('Should handle tree capacity', async function () {
+  it('Should handle tree capacity and create new tree', async function () {
     const { commitments } = await loadFixture(deploy);
 
-    // Set next leaf index to one less than filled tree 16 levels = 2^16 capacity)
-    await commitments.setNextLeafIndex(2 ** 16 - 2);
+    // Set next leaf index to one less than filled tree (24 levels = 2^24 capacity)
+    await commitments.setNextLeafIndex(2 ** 24 - 2);
 
-    // Check the insertion starting index
-    expect(await commitments.getStartingIndex(1)).to.equal(2 ** 16 - 2);
+    // Check the insertion info (should be tree 0, index 2^24 - 2)
+    let [treeNum, startIdx] = await commitments.getInsertionTreeNumberAndStartingIndex(1);
+    expect(treeNum).to.equal(0);
+    expect(startIdx).to.equal(2 ** 24 - 2);
 
     // Insert leaf hash
     await commitments.insertLeavesStub([randomBytes(32)]);
 
-    // Check the insertion starting index
-    expect(await commitments.getStartingIndex(1)).to.equal(2 ** 16 - 1);
+    // Check the insertion info (should be tree 0, index 2^24 - 1)
+    [treeNum, startIdx] = await commitments.getInsertionTreeNumberAndStartingIndex(1);
+    expect(treeNum).to.equal(0);
+    expect(startIdx).to.equal(2 ** 24 - 1);
 
-    // Insert leaf hash (tree is now full, nextLeafIndex = 2^16)
+    // Insert leaf hash (tree is now full, nextLeafIndex = 2^24)
     await commitments.insertLeavesStub([randomBytes(32)]);
 
-    // Try to insert beyond capacity (should revert)
-    await expect(commitments.insertLeavesStub([randomBytes(32)])).to.be.revertedWith(
-      'Commitments: Tree capacity exceeded',
-    );
+    // Now inserting should trigger new tree creation
+    // Check the insertion info (should be tree 1, index 0)
+    [treeNum, startIdx] = await commitments.getInsertionTreeNumberAndStartingIndex(1);
+    expect(treeNum).to.equal(1);
+    expect(startIdx).to.equal(0);
+
+    // Insert should succeed and create new tree
+    await commitments.insertLeavesStub([randomBytes(32)]);
+    
+    // Verify new tree was created
+    expect(await commitments.treeNumber()).to.equal(1);
+    expect(await commitments.nextLeafIndex()).to.equal(1);
   });
 });

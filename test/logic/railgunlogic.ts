@@ -210,11 +210,13 @@ describe('Logic/RailgunLogic', () => {
     );
 
     // Fees shouldn't be able to be set to more than 50%
-    await expect(railgunLogicAdmin.changeFee(5001n, 5n, 6n)).to.be.revertedWith(
-      'RailgunLogic: Shield Fee exceeds 50%',
+    await expect(railgunLogicAdmin.changeFee(5001n, 5n, 6n)).to.be.revertedWithCustomError(
+      railgunLogicAdmin,
+      'ShieldFeeExceeds50Percent',
     );
-    await expect(railgunLogicAdmin.changeFee(3n, 5001n, 6n)).to.be.revertedWith(
-      'RailgunLogic: Unshield Fee exceeds 50%',
+    await expect(railgunLogicAdmin.changeFee(3n, 5001n, 6n)).to.be.revertedWithCustomError(
+      railgunLogicAdmin,
+      'UnshieldFeeExceeds50Percent',
     );
   });
 
@@ -429,9 +431,10 @@ describe('Logic/RailgunLogic', () => {
       '',
     );
 
-    expect(
-      await railgunLogic.validateCommitmentPreimage(await validNote.getCommitmentPreimage()),
-    ).to.deep.equal([true, '']);
+    // Should not revert for valid note
+    await expect(
+      railgunLogic.validateCommitmentPreimage(await validNote.getCommitmentPreimage()),
+    ).to.not.be.reverted;
 
     // Check valid ERC721 note returns true
     const validERC721Note = new Note(
@@ -447,9 +450,10 @@ describe('Logic/RailgunLogic', () => {
       '',
     );
 
-    expect(
-      await railgunLogic.validateCommitmentPreimage(await validERC721Note.getCommitmentPreimage()),
-    ).to.deep.equal([true, '']);
+    // Should not revert for valid ERC721 note
+    await expect(
+      railgunLogic.validateCommitmentPreimage(await validERC721Note.getCommitmentPreimage()),
+    ).to.not.be.reverted;
 
     // Check ERC721 note with non-one value returns false
     const invalidERC721Note = new Note(
@@ -465,11 +469,9 @@ describe('Logic/RailgunLogic', () => {
       '',
     );
 
-    expect(
-      await railgunLogic.validateCommitmentPreimage(
-        await invalidERC721Note.getCommitmentPreimage(),
-      ),
-    ).to.deep.equal([false, 'Invalid NFT Note Value']);
+    await expect(
+      railgunLogic.validateCommitmentPreimage(await invalidERC721Note.getCommitmentPreimage()),
+    ).to.be.revertedWithCustomError(railgunLogic, 'InvalidNFTNoteValue');
 
     // Check zero value note returns false
     const zeroNote = new Note(
@@ -485,25 +487,24 @@ describe('Logic/RailgunLogic', () => {
       '',
     );
 
-    expect(
-      await railgunLogic.validateCommitmentPreimage(await zeroNote.getCommitmentPreimage()),
-    ).to.deep.equal([false, 'Invalid Note Value']);
+    await expect(
+      railgunLogic.validateCommitmentPreimage(await zeroNote.getCommitmentPreimage()),
+    ).to.be.revertedWithCustomError(railgunLogic, 'InvalidNoteValue');
 
     // Check note with npk out of range returns false
     const invalidNPK = await validNote.getCommitmentPreimage();
     invalidNPK.npk = new Uint8Array(32).fill(255);
 
-    expect(await railgunLogic.validateCommitmentPreimage(invalidNPK)).to.deep.equal([
-      false,
-      'Invalid Note NPK',
-    ]);
+    await expect(
+      railgunLogic.validateCommitmentPreimage(invalidNPK),
+    ).to.be.revertedWithCustomError(railgunLogic, 'InvalidNoteNPK');
 
     // Check blocklisted token returns false
     await railgunLogicAdmin.addToBlocklist([validNote.tokenData.tokenAddress]);
 
-    expect(
-      await railgunLogic.validateCommitmentPreimage(await validNote.getCommitmentPreimage()),
-    ).to.deep.equal([false, 'Unsupported Token']);
+    await expect(
+      railgunLogic.validateCommitmentPreimage(await validNote.getCommitmentPreimage()),
+    ).to.be.revertedWithCustomError(railgunLogic, 'UnsupportedToken');
   });
 
   it('Should sum commitments in a transaction', async () => {
@@ -547,6 +548,7 @@ describe('Logic/RailgunLogic', () => {
       // Get transaction
       const transaction = await dummyTransact(
         tree,
+        0, // treeNumber = 0
         0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NONE,
@@ -560,6 +562,7 @@ describe('Logic/RailgunLogic', () => {
       // Get unshield transaction
       const unshieldTransaction = await dummyTransact(
         tree,
+        0, // treeNumber = 0
         0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NORMAL,
@@ -624,6 +627,7 @@ describe('Logic/RailgunLogic', () => {
     // Create dummy transactions
     const dummyTransaction = await dummyTransact(
       tree,
+      0, // treeNumber = 0
       0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.NONE,
@@ -636,6 +640,7 @@ describe('Logic/RailgunLogic', () => {
 
     const dummyTransactionUnshield = await dummyTransact(
       tree,
+      0, // treeNumber = 0
       0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.NORMAL,
@@ -648,6 +653,7 @@ describe('Logic/RailgunLogic', () => {
 
     let dummyTransactionUnshieldRedirect = await dummyTransact(
       tree,
+      0, // treeNumber = 0
       0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.REDIRECT,
@@ -658,73 +664,69 @@ describe('Logic/RailgunLogic', () => {
       notesOutUnshield,
     );
 
-    // Should return true for valid transactions
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([true, '']);
+    // Should not revert for valid transactions
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshieldRedirect, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshieldRedirect, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    // Should return false if min gas price is too low
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 10 }),
-    ).to.deep.equal([false, 'Gas price too low']);
+    // Should revert if min gas price is too low
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 10 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'GasPriceTooLow');
 
-    // Should return false if adaptContract is set to non-0 and not the submitter's address
+    // Should revert if adaptContract is set to non-0 and not the submitter's address
     dummyTransaction.boundParams.adaptContract = await railgunLogicSnarkBypass.signer.getAddress();
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
     dummyTransaction.boundParams.adaptContract = arrayToHexString(randomBytes(20), true);
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([false, 'Invalid Adapt Contract as Sender']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidAdaptContract');
 
     dummyTransaction.boundParams.adaptContract = ethers.constants.AddressZero;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    // Should return false if invalid merkle root
+    // Should revert if invalid merkle root
     // Set a different root to make it invalid
     await railgunLogic.setMerkleRoot(0, ethers.utils.randomBytes(32));
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([false, 'Invalid Merkle Root']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidMerkleRoot');
 
     await railgunLogic.setMerkleRoot(0, tree.root);
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    // Should return false if chainID is invalid
+    // Should revert if chainID is invalid
     dummyTransaction.boundParams.chainID += 1n;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([false, 'ChainID mismatch']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'ChainIDMismatch');
 
     dummyTransaction.boundParams.chainID -= 1n;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
     // Should return false if incorrect number of ciphertext
     dummyTransaction.boundParams.commitmentCiphertext.push({
@@ -743,45 +745,37 @@ describe('Logic/RailgunLogic', () => {
       memo: randomBytes(123),
     });
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([false, 'Invalid Note Ciphertext Array Length']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidCiphertextLength');
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([false, 'Invalid Note Ciphertext Array Length']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidCiphertextLength');
 
     dummyTransaction.boundParams.commitmentCiphertext.pop();
 
     dummyTransactionUnshield.boundParams.commitmentCiphertext.pop();
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([true, '']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, { gasPrice: 100 }),
+    ).to.not.be.reverted;
 
-    // Should return false for invalid unshield preimage
+    // Should revert for invalid unshield preimage
     dummyTransactionUnshield.unshieldPreimage.value += 100n;
     dummyTransactionUnshieldRedirect.unshieldPreimage.value += 100n;
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([false, 'Invalid Withdraw Note']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshield, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidWithdrawNote');
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshieldRedirect, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([false, 'Invalid Withdraw Note']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshieldRedirect, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidWithdrawNote');
 
     dummyTransactionUnshield.unshieldPreimage.value -= 100n;
     dummyTransactionUnshieldRedirect.unshieldPreimage.value -= 100n;
@@ -795,6 +789,7 @@ describe('Logic/RailgunLogic', () => {
 
     dummyTransactionUnshieldRedirect = await dummyTransact(
       tree,
+      0, // treeNumber = 0
       0, // rootIndex = 0 (initial root)
       100n,
       UnshieldType.REDIRECT,
@@ -805,16 +800,15 @@ describe('Logic/RailgunLogic', () => {
       notesOutUnshield,
     );
 
-    expect(
-      await railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshieldRedirect, {
-        gasPrice: 100,
-      }),
-    ).to.deep.equal([false, 'Invalid Withdraw Note']);
+    await expect(
+      railgunLogicSnarkBypass.validateTransaction(dummyTransactionUnshieldRedirect, { gasPrice: 100 }),
+    ).to.be.revertedWithCustomError(railgunLogicSnarkBypass, 'InvalidWithdrawNote');
 
     if (!process.env.SKIP_LONG_TESTS) {
       // Generate SNARK proof
       const transaction = await transact(
         tree,
+        0, // treeNumber = 0
         0, // rootIndex = 0 (initial root)
         100n,
         UnshieldType.NONE,
@@ -825,16 +819,15 @@ describe('Logic/RailgunLogic', () => {
         notesOut,
       );
 
-      // Should return true for transaction with valid snark proof
-      expect(await railgunLogic.validateTransaction(transaction, { gasPrice: 100 })).to.deep.equal([
-        true,
-        '',
-      ]);
+      // Should not revert for transaction with valid snark proof
+      await expect(
+        railgunLogic.validateTransaction(transaction, { gasPrice: 100 }),
+      ).to.not.be.reverted;
 
-      // Should return false for transaction without valid snark proof
-      expect(
-        await railgunLogic.validateTransaction(dummyTransaction, { gasPrice: 100 }),
-      ).to.deep.equal([false, 'Invalid Snark Proof']);
+      // Should revert for transaction without valid snark proof
+      await expect(
+        railgunLogic.validateTransaction(dummyTransaction, { gasPrice: 100 }),
+      ).to.be.revertedWithCustomError(railgunLogic, 'InvalidSnarkProof');
     }
   });
 
@@ -869,6 +862,7 @@ describe('Logic/RailgunLogic', () => {
       // Get transaction
       const transaction = await dummyTransact(
         tree,
+        0, // treeNumber = 0
         0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NONE,
@@ -924,10 +918,10 @@ describe('Logic/RailgunLogic', () => {
         ),
       ).to.equal(true);
 
-      // Check nullifier event is emitted
+      // Check nullifier event is emitted (treeNumber = 0)
       await expect(railgunLogic.accumulateAndNullifyTransactionStub(transaction, i, 0))
         .to.emit(railgunLogic, 'Nullified')
-        .withArgs(nullifiersMatcher(transaction.nullifiers));
+        .withArgs(0, nullifiersMatcher(transaction.nullifiers));
     }
   });
 
@@ -1041,7 +1035,7 @@ describe('Logic/RailgunLogic', () => {
 
       await expect(
         railgunLogic.transferTokenInStub(await erc1155Note.getCommitmentPreimage()),
-      ).to.be.revertedWith('RailgunLogic: ERC1155 not yet supported');
+      ).to.be.revertedWithCustomError(railgunLogic, 'ERC1155NotSupported');
     }
   });
 
@@ -1131,7 +1125,7 @@ describe('Logic/RailgunLogic', () => {
 
       await expect(
         railgunLogic.transferTokenOutStub(erc1155Note.getCommitmentPreimage()),
-      ).to.be.revertedWith('RailgunLogic: ERC1155 not yet supported');
+      ).to.be.revertedWithCustomError(railgunLogic, 'ERC1155NotSupported');
     }
   });
 
@@ -1245,7 +1239,7 @@ describe('Logic/RailgunLogic', () => {
 
       await expect(
         railgunLogic.transferTokenInStub(await erc1155Note.getCommitmentPreimage()),
-      ).to.be.revertedWith('RailgunLogic: ERC1155 not yet supported');
+      ).to.be.revertedWithCustomError(railgunLogic, 'ERC1155NotSupported');
     }
   });
 
@@ -1276,7 +1270,7 @@ describe('Logic/RailgunLogic', () => {
 
     await expect(
       railgunLogic.transferTokenInStub(await erc20Note.getCommitmentPreimage()),
-    ).to.be.revertedWith('RailgunLogic: ERC20 transfer failed');
+    ).to.be.revertedWithCustomError(railgunLogic, 'ERC20TransferFailed');
 
     // Check non-transferring ERC721 gets reverted
     await nonTransferringERC721.mint(railgunLogic.signer.getAddress(), 0n);
@@ -1291,6 +1285,6 @@ describe('Logic/RailgunLogic', () => {
 
     await expect(
       railgunLogic.transferTokenInStub(await erc721Note.getCommitmentPreimage()),
-    ).to.be.revertedWith("RailgunLogic: ERC721 didn't transfer");
+    ).to.be.revertedWithCustomError(railgunLogic, 'ERC721TransferFailed');
   });
 });

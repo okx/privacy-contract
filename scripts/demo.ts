@@ -1,4 +1,5 @@
 import { ethers } from 'hardhat';
+import { ContractReceipt, ContractTransaction } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Wallet } from '../helpers/logic/wallet';
@@ -6,118 +7,89 @@ import { Note, TokenType } from '../helpers/logic/note';
 import { randomBytes } from '../helpers/global/crypto';
 import { arrayToHexString } from '../helpers/global/bytes';
 import { MerkleTree } from '../helpers/logic/merkletree';
-import { transact, UnshieldType } from '../helpers/logic/transaction';
+import { UnshieldType } from '../helpers/logic/transaction';
+import { ActionData, Call, transactWithAdaptParams } from '../helpers/adapt/relay';
+import { RailgunSmartWalletStub } from '../typechain-types';
 
 /** Must match Commitments.sol ROOT_HISTORY_SIZE (lazy root: proof uses next slot) */
-const ROOT_HISTORY_SIZE = 600;
+const ROOT_HISTORY_SIZE = 100;
+
+/** Default gas limit for relay transactions */
+const DEFAULT_GAS_LIMIT = 5_000_000;
+
+/** Default deadline duration in seconds (1 hour) */
+const DEADLINE_DURATION = 3600;
 
 /**
- * Resolve proof root index: if chain root at currentIndex matches local root, use currentIndex;
- * else if chain getRoot() matches local root (lazy update pending), use (currentIndex+1) % ROOT_HISTORY_SIZE.
+ * Resolve proof root index using contract's findRoot method.
+ * Falls back to checking getRoot() for lazy update scenario.
  */
 async function resolveProofRootIndex(
-  railgun: { getCurrentRootIndex: () => Promise<any>; roots: (i: number) => Promise<string>; getRoot: () => Promise<string> },
+  railgun: RailgunSmartWalletStub,
   merkletree: MerkleTree,
   logPrefix: string
 ): Promise<number> {
-  const chainRootIndex = await railgun.getCurrentRootIndex();
-  const chainIndexNum = Number(chainRootIndex);
-  const rootAtChainIndex = await railgun.roots(chainIndexNum);
   const localRootHex = arrayToHexString(merkletree.root, true);
-
-  if (rootAtChainIndex.toLowerCase() === localRootHex.toLowerCase()) {
-    console.log(`📦 [${logPrefix}] chainRootIndex=${chainIndexNum} matches local root → proof rootIndex=${chainIndexNum}`);
-    return chainIndexNum;
+  
+  // Try to find root in history using contract's findRoot
+  const [exists, rootIndex] = await railgun.findRoot(merkletree.treeNumber, localRootHex);
+  
+  if (exists) {
+    console.log(`📦 [${logPrefix}] findRoot found root at index ${rootIndex}`);
+    return rootIndex;
   }
 
+  // Fallback: check if it's a lazy update scenario (root not yet written to history)
   const chainCurrentRoot = await railgun.getRoot();
   if (chainCurrentRoot.toLowerCase() === localRootHex.toLowerCase()) {
-    const proofIndex = (chainIndexNum + 1) % ROOT_HISTORY_SIZE;
-    console.log(`📦 [${logPrefix}] chain getRoot() matches local (lazy) → proof rootIndex=${proofIndex} (chainIndex was ${chainIndexNum})`);
+    const chainRootIndex = await railgun.getCurrentRootIndex();
+    const proofIndex = (Number(chainRootIndex) + 1) % ROOT_HISTORY_SIZE;
+    console.log(`📦 [${logPrefix}] lazy update: getRoot() matches → proof rootIndex=${proofIndex}`);
     return proofIndex;
   }
 
   throw new Error(
-    `Local root does not match chain: local=${localRootHex} roots(${chainIndexNum})=${rootAtChainIndex} getRoot()=${chainCurrentRoot}`
+    `Local root not found on chain: local=${localRootHex} getRoot()=${chainCurrentRoot}`
   );
 }
 
 /**
  * Log gas used information from transaction receipt
  */
-function logGasUsed(receipt: any, transactionName: string): string {
-  const gasUsed = receipt.gasUsed;
-  console.log(`\n⛽ ${transactionName} Gas Used: ${gasUsed.toString()}`);
-  return gasUsed.toString();
+function logGasUsed(receipt: ContractReceipt, transactionName: string): void {
+  console.log(`\n⛽ ${transactionName} Gas Used: ${receipt.gasUsed.toString()}`);
 }
 
 /**
  * Log transaction hash and block number for debugging (e.g. same-block root timing)
  */
-function logTxBlock(receipt: any, transactionName: string): void {
+function logTxBlock(receipt: ContractReceipt, transactionName: string): void {
   console.log(`📦 [${transactionName}] blockNumber=${receipt.blockNumber} txHash=${receipt.transactionHash}`);
 }
 
 /**
- * Calculate adaptParams to match RelayAdapt.getAdaptParams()
- * 
- * In Solidity:
- * return keccak256(abi.encode(nullifiers, _transactions.length, _actionData));
+ * Create empty ActionData for relay transactions
  */
-interface ActionDataCall {
-  to: string;
-  data: string;
-  value: any; // ethers.BigNumber
+function createEmptyActionData(): ActionData {
+  return {
+    random: randomBytes(31),
+    requireSuccess: true,
+    minGasLimit: 0n,
+    calls: [] as Call[],
+  };
 }
 
-interface ActionData {
-  random: string;
-  requireSuccess: boolean;
-  minGasLimit: number;
-  calls: ActionDataCall[];
-}
-
-async function calculateAdaptParams(
+/**
+ * Scan transaction with merkletree and wallets
+ */
+async function scanTransaction(
+  tx: ContractTransaction,
+  railgun: RailgunSmartWalletStub,
   merkletree: MerkleTree,
-  inputNotes: Note[],
-  transactionsLength: number,
-  actionData: ActionData
-): Promise<Uint8Array> {
-  // 1. Calculate nullifiers for each input note
-  const nullifiers: string[][] = [];
-  const txNullifiers: string[] = [];
-  
-  for (const note of inputNotes) {
-    const noteHash = await note.getHash();
-    const merkleProof = merkletree.generateProof(noteHash);
-    const nullifier = await note.getNullifier(merkleProof.indices);
-    txNullifiers.push(arrayToHexString(nullifier, true));
-  }
-  nullifiers.push(txNullifiers);
-
-  // 2. Encode like Solidity: abi.encode(nullifiers, transactionsLength, actionData)
-  const encoded = ethers.utils.defaultAbiCoder.encode(
-    [
-      'bytes32[][]',  // nullifiers (2D array)
-      'uint256',      // transactions.length
-      'tuple(bytes31 random, bool requireSuccess, uint256 minGasLimit, tuple(address to, bytes data, uint256 value)[] calls)',  // ActionData
-    ],
-    [
-      nullifiers,
-      transactionsLength,
-      actionData,
-    ]
-  );
-
-  // 3. Hash it
-  const hash = ethers.utils.keccak256(encoded);
-  
-  // Convert to Uint8Array
-  const result = new Uint8Array(32);
-  const hashBytes = ethers.utils.arrayify(hash);
-  result.set(hashBytes);
-  
-  return result;
+  wallets: Wallet[]
+): Promise<void> {
+  await merkletree.scanTX(tx, railgun);
+  await Promise.all(wallets.map((w) => w.scanTX(tx, railgun)));
 }
 
 /**
@@ -197,7 +169,7 @@ async function main() {
       PoseidonT4: POSEIDON_T4_ADDRESS,
     },
   });
-  const railgun = RailgunSmartWallet.attach(RAILGUN_SMART_WALLET_ADDRESS);
+  const railgun = RailgunSmartWallet.attach(RAILGUN_SMART_WALLET_ADDRESS) as RailgunSmartWalletStub;
 
   const RelayAdapt = await ethers.getContractFactory('RelayAdapt');
   const relayAdapt = RelayAdapt.attach(RELAY_ADAPT_ADDRESS);
@@ -281,7 +253,7 @@ async function main() {
   };
 
   // 1.7 Prepare DelegateShieldRequests and signatures
-  const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+  const deadline = Math.floor(Date.now() / 1000) + DEADLINE_DURATION;
   const delegateShieldRequests = [];
   const signatures = [];
 
@@ -328,7 +300,7 @@ async function main() {
   );
   const shieldReceipt = await shieldTx.wait();
   logTxBlock(shieldReceipt, 'DelegateShield');
-  const shieldGasUsed = logGasUsed(shieldReceipt, 'DelegateShield');
+  logGasUsed(shieldReceipt, 'DelegateShield');
 
   // ========== (Optional) Query Shield Events ==========
   /*
@@ -346,8 +318,7 @@ async function main() {
 
   // 1.9 Scan transaction (wallet side)
   console.log('\nScanning transaction...');
-  await merkletree.scanTX(shieldTx, railgun);
-  await wallet1.scanTX(shieldTx, railgun);
+  await scanTransaction(shieldTx, railgun, merkletree, [wallet1]);
   console.log('Wallet1 notes count:', wallet1.notes.length);
 
   if (wallet1.notes.length > 0) {
@@ -390,40 +361,27 @@ async function main() {
   console.log(`📦 [before Transfer] blockNumber=${blockAtRootQuery} (shield was in block ${shieldReceipt.blockNumber})`);
 
   // 2.5 Prepare actionData
-  const actionData = {
-    random: ethers.utils.hexlify(randomBytes(31)),
-    requireSuccess: true,
-    minGasLimit: 0,
-    calls: [] as ActionDataCall[], // no additional calls
-  };
+  const actionData = createEmptyActionData();
 
-  // 2.6 Calculate adaptParams BEFORE generating proof
-  console.log('Calculating adaptParams...');
-  const adaptParams = await calculateAdaptParams(
-    merkletree,
-    inputNotes,
-    1, // transactionsLength = 1
-    actionData
-  );
-  console.log('adaptParams:', ethers.utils.hexlify(adaptParams));
-
-  // 2.7 Generate SNARK proof with correct adaptParams
+  // 2.6 Generate SNARK proof with correct adaptParams using transactWithAdaptParams
   console.log('Generating SNARK proof (this may take a moment)...');
   const proofStartTime = Date.now();
-  const transferTransaction = await transact(
+  const [transferTransaction] = await transactWithAdaptParams(
     merkletree,
-    rootIndex, // root index for O(1) lookup
-    0n, // minGasPrice
-    UnshieldType.NONE, // no unshield
-    chainID,
-    relayAdapt.address, // adapt contract is RelayAdapt
-    adaptParams, // use calculated adaptParams
-    inputNotes,
-    outputNotes,
+    merkletree.treeNumber,
+    rootIndex,
+    actionData,
+    [{
+      minGasPrice: 0n,
+      unshield: UnshieldType.NONE,
+      chainID,
+      adaptContract: relayAdapt.address,
+      notesIn: inputNotes,
+      notesOut: outputNotes,
+    }],
   );
   const proofEndTime = Date.now();
   console.log(`✅ SNARK proof generated (${proofEndTime - proofStartTime}ms)`);
-
 
   // 2.7 Broadcaster executes relay
   console.log('\nBroadcaster executing relay...');
@@ -431,18 +389,16 @@ async function main() {
   const transferTx = await relayAdapt.connect(broadcaster).relay(
     [transferTransaction],
     actionData,
-    { gasLimit: 5000000 }
+    { gasLimit: DEFAULT_GAS_LIMIT }
   );
   const relayReceipt = await transferTx.wait();
   logTxBlock(relayReceipt, 'Relay (Transfer)');
-  const transferGasUsed = logGasUsed(relayReceipt, 'Relay (Transfer)');
+  logGasUsed(relayReceipt, 'Relay (Transfer)');
 
-  // 2.7 Scan transfer transaction
-  await merkletree.scanTX(transferTx, railgun);
-  await wallet1.scanTX(transferTx, railgun);
-  await wallet2.scanTX(transferTx, railgun);
+  // 2.8 Scan transfer transaction
+  await scanTransaction(transferTx, railgun, merkletree, [wallet1, wallet2]);
 
-  // 2.8 Check balances
+  // 2.9 Check balances
   const wallet1Balance = await wallet1.getBalance(merkletree, tokenData);
   const wallet2Balance = await wallet2.getBalance(merkletree, tokenData);
   console.log('Wallet1 balance after transfer:', wallet1Balance.toString());
@@ -466,41 +422,30 @@ async function main() {
   console.log('Unshield outputs:', unshieldNotes.outputs.length);
   console.log('Unshield to address:', user.address);
 
-  // 3.2 Prepare actionData and calculate adaptParams BEFORE generating proof
-  const unshieldActionData = {
-    random: ethers.utils.hexlify(randomBytes(31)),
-    requireSuccess: true,
-    minGasLimit: 0,
-    calls: [] as ActionDataCall[],
-  };
-
-  console.log('Calculating adaptParams for unshield...');
-  const unshieldAdaptParams = await calculateAdaptParams(
-    merkletree,
-    unshieldNotes.inputs,
-    1, // transactionsLength = 1
-    unshieldActionData
-  );
-  console.log('unshieldAdaptParams:', ethers.utils.hexlify(unshieldAdaptParams));
+  // 3.2 Prepare actionData
+  const unshieldActionData = createEmptyActionData();
 
   // 3.3 Get root index: chain roots(chainIndex) vs local root; if lazy, chain getRoot() vs local → index+1
   const blockAtUnshieldRootQuery = await ethers.provider.getBlockNumber();
   const unshieldRootIndex = await resolveProofRootIndex(railgun, merkletree, 'before Unshield');
   console.log(`📦 [before Unshield] blockNumber=${blockAtUnshieldRootQuery}`);
 
-  // 3.4 Generate SNARK proof with correct adaptParams
+  // 3.4 Generate SNARK proof with correct adaptParams using transactWithAdaptParams
   console.log('Generating SNARK proof for unshield...');
   const unshieldProofStart = Date.now();
-  const unshieldTransaction = await transact(
+  const [unshieldTransaction] = await transactWithAdaptParams(
     merkletree,
-    unshieldRootIndex, // root index for O(1) lookup
-    0n, // minGasPrice
-    UnshieldType.NORMAL, // normal unshield
-    chainID,
-    relayAdapt.address, // adapt contract is RelayAdapt
-    unshieldAdaptParams, // use calculated adaptParams
-    unshieldNotes.inputs,
-    unshieldNotes.outputs,
+    merkletree.treeNumber,
+    unshieldRootIndex,
+    unshieldActionData,
+    [{
+      minGasPrice: 0n,
+      unshield: UnshieldType.NORMAL,
+      chainID,
+      adaptContract: relayAdapt.address,
+      notesIn: unshieldNotes.inputs,
+      notesOut: unshieldNotes.outputs,
+    }],
   );
   const unshieldProofEnd = Date.now();
   console.log(`✅ SNARK proof generated (${unshieldProofEnd - unshieldProofStart}ms)`);
@@ -511,22 +456,20 @@ async function main() {
   const unshieldTx = await relayAdapt.connect(broadcaster).relay(
     [unshieldTransaction],
     unshieldActionData,
-    { gasLimit: 5000000 }
+    { gasLimit: DEFAULT_GAS_LIMIT }
   );
   const unshieldReceipt = await unshieldTx.wait();
   logTxBlock(unshieldReceipt, 'Relay (Unshield)');
-  const unshieldGasUsed = logGasUsed(unshieldReceipt, 'Relay (Unshield)');
+  logGasUsed(unshieldReceipt, 'Relay (Unshield)');
 
-  // 3.5 Check token balance of user
+  // 3.6 Check token balance of user
   const userFinalBalance = await testERC20.balanceOf(user.address);
   console.log('User ERC20 balance after unshield:', ethers.utils.formatEther(userFinalBalance));
 
-  // 3.6 Scan unshield transaction
-  await merkletree.scanTX(unshieldTx, railgun);
-  await wallet1.scanTX(unshieldTx, railgun);
-  await wallet2.scanTX(unshieldTx, railgun);
+  // 3.7 Scan unshield transaction
+  await scanTransaction(unshieldTx, railgun, merkletree, [wallet1, wallet2]);
 
-  // 3.7 Check final balances
+  // 3.8 Check final balances
   const wallet1FinalBalance = await wallet1.getBalance(merkletree, tokenData);
   const wallet2FinalBalance = await wallet2.getBalance(merkletree, tokenData);
   console.log('Wallet1 final balance:', wallet1FinalBalance.toString());
@@ -552,7 +495,7 @@ async function main() {
 
   console.log('\n=== Test Complete ===');
   console.log('Summary:');
-  console.log('  - User shielded 3 ETH worth of tokens via delegateShield');
+  console.log('  - User shielded 3 tokens via delegateShield');
   console.log('  - Wallet1 transferred to Wallet2 via relay');
   console.log('  - Wallet2 unshielded to user address via relay');
 }

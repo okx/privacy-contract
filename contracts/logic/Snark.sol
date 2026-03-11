@@ -4,6 +4,13 @@ pragma abicoder v2;
 
 import { G1Point, G2Point, VerifyingKey, SnarkProof, SNARK_SCALAR_FIELD } from "./Globals.sol";
 
+// Custom errors
+error InvalidNegation();
+error AddFailed();
+error ScalarMulFailed();
+error PairingFailed();
+error InputTooLarge();
+
 library Snark {
   uint256 private constant PRIME_Q =
     21888242871839275222246405745257275088696311157297823662689037894645226208583;
@@ -23,7 +30,7 @@ library Snark {
     rh = mulmod(rh, p.x, PRIME_Q); //x^3
     rh = addmod(rh, 3, PRIME_Q); //x^3 + 3
     uint256 lh = mulmod(p.y, p.y, PRIME_Q); //y^2
-    require(lh == rh, "Snark: Invalid negation");
+    if (lh != rh) revert InvalidNegation();
 
     return G1Point(p.x, PRIME_Q - (p.y % PRIME_Q));
   }
@@ -51,7 +58,7 @@ library Snark {
     }
 
     // Check if operation succeeded
-    require(success, "Snark: Add Failed");
+    if (!success) revert AddFailed();
 
     return result;
   }
@@ -76,7 +83,7 @@ library Snark {
     }
 
     // Check multiplication succeeded
-    require(success, "Snark: Scalar Multiplication Failed");
+    if (!success) revert ScalarMulFailed();
   }
 
   /**
@@ -133,7 +140,7 @@ library Snark {
     }
 
     // Check if operation succeeded
-    require(success, "Snark: Pairing Verification Failed");
+    if (!success) revert PairingFailed();
 
     return out[0] != 0;
   }
@@ -155,7 +162,7 @@ library Snark {
     // Loop through every input
     for (uint256 i = 0; i < _inputs.length; i += 1) {
       // Make sure inputs are less than SNARK_SCALAR_FIELD
-      require(_inputs[i] < SNARK_SCALAR_FIELD, "Snark: Input > SNARK_SCALAR_FIELD");
+      if (_inputs[i] >= SNARK_SCALAR_FIELD) revert InputTooLarge();
 
       // Add to vkX point
       vkX = add(vkX, scalarMul(_vk.ic[i + 1], _inputs[i]));

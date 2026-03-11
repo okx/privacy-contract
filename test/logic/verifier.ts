@@ -78,6 +78,7 @@ describe('Logic/Verifier', () => {
 
     for (let i = 0; i < loops; i += 1) {
       const vector: BoundParams = {
+        treeNumber: 0,
         minGasPrice: BigInt(i * 2),
         unshield: i % 3,
         chainID,
@@ -163,6 +164,7 @@ describe('Logic/Verifier', () => {
       // Get dummy proof
       const tx = await dummyTransact(
         merkletree,
+        0, // treeNumber = 0
         0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NONE,
@@ -242,6 +244,7 @@ describe('Logic/Verifier', () => {
       // Get proof
       const tx = await transact(
         merkletree,
+        0, // treeNumber = 0
         0, // rootIndex = 0 (initial root)
         0n,
         UnshieldType.NONE,
@@ -315,6 +318,7 @@ describe('Logic/Verifier', () => {
         // Get dummy proof
         const tx = await dummyTransact(
           merkletree,
+          0, // treeNumber = 0
           0, // rootIndex = 0 (initial root)
           0n,
           UnshieldType.NONE,
@@ -325,7 +329,10 @@ describe('Logic/Verifier', () => {
           notesOut,
         );
 
-        await expect(verifierBypassSigner.verify(tx)).to.be.revertedWith('Verifier: Key not set');
+        await expect(verifierBypassSigner.verify(tx)).to.be.revertedWithCustomError(
+          verifierBypassSigner,
+          'VerifyingKeyNotSet',
+        );
       }
     }
   });

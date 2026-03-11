@@ -27,11 +27,8 @@ contract RailgunSmartWallet is RailgunLogic {
 
     // Loop through each note and process
     for (uint256 notesIter = 0; notesIter < _shieldRequests.length; notesIter += 1) {
-      // Check note is valid
-      (bool valid, string memory reason) = RailgunLogic.validateCommitmentPreimage(
-        _shieldRequests[notesIter].preimage
-      );
-      require(valid, string.concat("RailgunSmartWallet: ", reason));
+      // Check note is valid (reverts on invalid)
+      RailgunLogic.validateCommitmentPreimage(_shieldRequests[notesIter].preimage);
 
       // Process shield request and store adjusted note
       (commitments[notesIter], fees[notesIter]) = RailgunLogic.transferTokenIn(
@@ -45,11 +42,11 @@ contract RailgunSmartWallet is RailgunLogic {
       shieldCiphertext[notesIter] = _shieldRequests[notesIter].ciphertext;
     }
 
-    // Get insertion start index
-    uint256 insertionStartIndex = Commitments.getStartingIndex(commitments.length);
+    // Get insertion tree number and start index
+    (uint256 insertionTreeNumber, uint256 insertionStartIndex) = Commitments.getInsertionTreeNumberAndStartingIndex(commitments.length);
 
     // Emit Shield events (for wallets) for the commitments
-    emit Shield(insertionStartIndex, commitments, shieldCiphertext, fees);
+    emit Shield(insertionTreeNumber, insertionStartIndex, commitments, shieldCiphertext, fees);
 
     // Push new commitments to merkle tree
     Commitments.addLeaves(insertionLeaves);
@@ -80,11 +77,8 @@ contract RailgunSmartWallet is RailgunLogic {
       transactionIter < _transactions.length;
       transactionIter += 1
     ) {
-      // Validate transaction
-      (bool valid, string memory reason) = RailgunLogic.validateTransaction(
-        _transactions[transactionIter]
-      );
-      require(valid, string.concat("RailgunSmartWallet: ", reason));
+      // Validate transaction (reverts on invalid)
+      RailgunLogic.validateTransaction(_transactions[transactionIter]);
 
       // Nullify, accumulate, and update offset
       commitmentsStartOffset = RailgunLogic.accumulateAndNullifyTransaction(
@@ -103,22 +97,19 @@ contract RailgunSmartWallet is RailgunLogic {
     ) {
       // If unshield is specified, process
       if (_transactions[transactionIter].boundParams.unshield != UnshieldType.NONE) {
-        // Check note is valid
-        (bool valid, string memory reason) = RailgunLogic.validateCommitmentPreimage(
-          _transactions[transactionIter].unshieldPreimage
-        );
-        require(valid, string.concat("RailgunSmartWallet: ", reason));
+        // Check note is valid (reverts on invalid)
+        RailgunLogic.validateCommitmentPreimage(_transactions[transactionIter].unshieldPreimage);
 
         RailgunLogic.transferTokenOut(_transactions[transactionIter].unshieldPreimage);
       }
     }
 
-    // Get insertion start index
-    uint256 insertionStartIndex = Commitments.getStartingIndex(commitments.length);
+    // Get insertion tree number and start index
+    (uint256 insertionTreeNumber, uint256 insertionStartIndex) = Commitments.getInsertionTreeNumberAndStartingIndex(commitments.length);
 
     // Emit commitment state update
     if (commitments.length > 0) {
-      emit Transact(insertionStartIndex, commitments, ciphertext);
+      emit Transact(insertionTreeNumber, insertionStartIndex, commitments, ciphertext);
     }
 
     // Push commitments to tree after events due to insertLeaves causing side effects

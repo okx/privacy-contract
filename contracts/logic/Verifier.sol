@@ -9,6 +9,9 @@ import { VERIFICATION_BYPASS, SnarkProof, Transaction, BoundParams, VerifyingKey
 
 import { Snark } from "./Snark.sol";
 
+// Custom error
+error VerifyingKeyNotSet();
+
 /**
  * @title Verifier
  * @author Railgun Contributors
@@ -92,7 +95,7 @@ contract Verifier is OwnableUpgradeable {
     VerifyingKey memory verifyingKey = verificationKeys[nullifiersLength][commitmentsLength];
 
     // Check if verifying key is set
-    require(verifyingKey.alpha1.x != 0, "Verifier: Key not set");
+    if (verifyingKey.alpha1.x == 0) revert VerifyingKeyNotSet();
 
     // Calculate inputs
     uint256[] memory inputs = new uint256[](2 + nullifiersLength + commitmentsLength);

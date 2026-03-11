@@ -34,6 +34,7 @@ export interface InputOutputBundle {
 }
 
 export interface BoundParams {
+  treeNumber: number;
   minGasPrice: bigint;
   unshield: UnshieldType;
   chainID: bigint;
@@ -104,7 +105,7 @@ function hashBoundParams(boundParams: BoundParams): Uint8Array {
   const encodedBytes = hexStringToArray(
     ethers.utils.defaultAbiCoder.encode(
       [
-        'tuple(uint72 minGasPrice, uint8 unshield, uint64 chainID, address adaptContract, bytes32 adaptParams, tuple(bytes32[4] ciphertext, bytes32 blindedSenderViewingKey, bytes32 blindedReceiverViewingKey, bytes annotationData, bytes memo)[] commitmentCiphertext) boundParams',
+        'tuple(uint32 treeNumber, uint64 minGasPrice, uint8 unshield, uint64 chainID, address adaptContract, bytes32 adaptParams, tuple(bytes32[4] ciphertext, bytes32 blindedSenderViewingKey, bytes32 blindedReceiverViewingKey, bytes annotationData, bytes memo)[] commitmentCiphertext) boundParams',
       ],
       [boundParams],
     ),
@@ -315,6 +316,8 @@ function padWithDummyNotes(originalBundle: InputOutputBundle, outputsLength: num
  *
  * @param proof - snark proof
  * @param merkletree - merkle tree to get inclusion proofs from
+ * @param treeNumber - tree number
+ * @param rootIndex - root index for O(1) lookup
  * @param minGasPrice - minimum gas price
  * @param unshield - unshield field
  * (0 for no unshield, 1 for unshield, 2 for unshield with override allowed)
@@ -329,6 +332,7 @@ function padWithDummyNotes(originalBundle: InputOutputBundle, outputsLength: num
 async function formatPublicInputs(
   proof: ProofBundle,
   merkletree: MerkleTree,
+  treeNumber: number,
   rootIndex: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
@@ -363,6 +367,7 @@ async function formatPublicInputs(
     nullifiers,
     commitments,
     boundParams: {
+      treeNumber,
       minGasPrice,
       unshield,
       chainID,
@@ -382,6 +387,7 @@ async function formatPublicInputs(
  * Formats inputs for prover
  *
  * @param merkletree - merkle tree to get inclusion proofs from
+ * @param treeNumber - tree number
  * @param minGasPrice - minimum gas price
  * @param unshield - unshield field
  * @param chainID - chain ID to lock proof to
@@ -394,6 +400,7 @@ async function formatPublicInputs(
  */
 async function formatCircuitInputs(
   merkletree: MerkleTree,
+  treeNumber: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
   chainID: bigint,
@@ -409,6 +416,7 @@ async function formatCircuitInputs(
 
   // Get bound parameters hash
   const boundParamsHash = hashBoundParams({
+    treeNumber,
     minGasPrice,
     unshield,
     chainID,
@@ -478,6 +486,8 @@ async function formatCircuitInputs(
  * Generates transaction with dummy proof
  *
  * @param merkletree - merkle tree to get inclusion proofs from
+ * @param treeNumber - tree number
+ * @param rootIndex - root index for O(1) lookup
  * @param minGasPrice - minimum gas price
  * @param unshield - unshield field
  * (0 for no unshield, 1 for unshield, 2 for unshield with override allowed)
@@ -490,6 +500,7 @@ async function formatCircuitInputs(
  */
 async function dummyTransact(
   merkletree: MerkleTree,
+  treeNumber: number,
   rootIndex: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
@@ -514,6 +525,7 @@ async function dummyTransact(
   return formatPublicInputs(
     dummyProof,
     merkletree,
+    treeNumber,
     rootIndex,
     minGasPrice,
     unshield,
@@ -530,6 +542,8 @@ async function dummyTransact(
  * Generates and proves transaction
  *
  * @param merkletree - merkle tree to get inclusion proofs from
+ * @param treeNumber - tree number
+ * @param rootIndex - root index for O(1) lookup
  * @param minGasPrice - minimum gas price
  * @param unshield - unshield field
  * (0 for no unshield, 1 for unshield, 2 for unshield with override allowed)
@@ -542,6 +556,7 @@ async function dummyTransact(
  */
 async function transact(
   merkletree: MerkleTree,
+  treeNumber: number,
   rootIndex: number,
   minGasPrice: bigint,
   unshield: UnshieldType,
@@ -574,6 +589,7 @@ async function transact(
   // Get circuit inputs
   const inputs = await formatCircuitInputs(
     merkletree,
+    treeNumber,
     minGasPrice,
     unshield,
     chainID,
@@ -595,6 +611,7 @@ async function transact(
   const result = await formatPublicInputs(
     proof,
     merkletree,
+    treeNumber,
     rootIndex,
     minGasPrice,
     unshield,

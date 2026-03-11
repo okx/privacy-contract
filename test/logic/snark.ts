@@ -253,6 +253,6 @@ describe('Logic/Snark', () => {
         },
         [21888242871839275222246405745257275088548364400416034343698204186575808495618n],
       ),
-    ).to.be.revertedWith('Snark: Input > SNARK_SCALAR_FIELD');
+    ).to.be.revertedWithCustomError(snarkStub, 'InputTooLarge');
   });
 });

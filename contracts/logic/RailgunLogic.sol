@@ -19,6 +19,28 @@ import { PoseidonT4 } from "./Poseidon.sol";
 
 // Core validation logic should remain here
 
+// Custom errors for gas efficiency
+error OnlyRelayAdapt();
+error InvalidRelayAdaptAddress();
+error ShieldFeeExceeds50Percent();
+error UnshieldFeeExceeds50Percent();
+error ERC20TransferFailed();
+error ERC721TransferFailed();
+error ERC1155NotSupported();
+error UnsafeVectors();
+error GasPriceTooLow();
+error InvalidAdaptContract();
+error ChainIDMismatch();
+error InvalidMerkleRoot();
+error InvalidCiphertextLength();
+error InvalidWithdrawNote();
+error InvalidSnarkProof();
+error NoteAlreadySpent();
+error InvalidNoteValue();
+error UnsupportedToken();
+error InvalidNoteNPK();
+error InvalidNFTNoteValue();
+
 /**
  * @title Railgun Logic
  * @author Railgun Contributors
@@ -60,7 +82,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
    * @notice Modifier to restrict access to RelayAdapt contract only
    */
   modifier onlyRelayAdapt() {
-    require(msg.sender == relayAdapt, "RailgunLogic: Only RelayAdapt");
+    if (msg.sender != relayAdapt) revert OnlyRelayAdapt();
     _;
   }
 
@@ -70,12 +92,14 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
   // Transaction events
   event Transact(
+    uint256 treeNumber,
     uint256 startPosition,
     bytes32[] hash,
     CommitmentCiphertext[] ciphertext
   );
 
   event Shield(
+    uint256 treeNumber,
     uint256 startPosition,
     CommitmentPreimage[] commitments,
     ShieldCiphertext[] shieldCiphertext,
@@ -84,7 +108,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
   event Unshield(address to, TokenData token, uint256 amount, uint256 fee);
 
-  event Nullified(bytes32[] nullifier);
+  event Nullified(uint32 treeNumber, bytes32[] nullifier);
 
   // Event for RelayAdapt initialization
   event RelayAdaptInitialized(address relayAdapt);
@@ -117,7 +141,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
     changeFee(_shieldFee, _unshieldFee, _nftFee);
 
     // Set RelayAdapt
-    require(_relayAdapt != address(0), "RailgunLogic: Invalid RelayAdapt address");
+    if (_relayAdapt == address(0)) revert InvalidRelayAdaptAddress();
     relayAdapt = _relayAdapt;
     emit RelayAdaptInitialized(_relayAdapt);
 
@@ -155,8 +179,8 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
    */
   function changeFee(uint120 _shieldFee, uint120 _unshieldFee, uint256 _nftFee) public onlyOwner {
     if (_shieldFee != shieldFee || _unshieldFee != unshieldFee || _nftFee != nftFee) {
-      require(_shieldFee <= BASIS_POINTS / 2, "RailgunLogic: Shield Fee exceeds 50%");
-      require(_unshieldFee <= BASIS_POINTS / 2, "RailgunLogic: Unshield Fee exceeds 50%");
+      if (_shieldFee > BASIS_POINTS / 2) revert ShieldFeeExceeds50Percent();
+      if (_unshieldFee > BASIS_POINTS / 2) revert UnshieldFeeExceeds50Percent();
 
       // Change fee
       shieldFee = _shieldFee;
@@ -229,26 +253,21 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
   /**
    * @notice Checks commitment ranges for validity
-   * @return valid, reason
    */
   function validateCommitmentPreimage(
     CommitmentPreimage calldata _note
-  ) public view returns (bool, string memory) {
+  ) public view {
     // Note must be more than 0
-    if (_note.value == 0) return (false, "Invalid Note Value");
+    if (_note.value == 0) revert InvalidNoteValue();
 
     // Note token must not be blocklisted
-    if (TokenBlocklist.tokenBlocklist[_note.token.tokenAddress])
-      return (false, "Unsupported Token");
+    if (TokenBlocklist.tokenBlocklist[_note.token.tokenAddress]) revert UnsupportedToken();
 
     // Note NPK must be in field
-    if (uint256(_note.npk) >= SNARK_SCALAR_FIELD) return (false, "Invalid Note NPK");
+    if (uint256(_note.npk) >= SNARK_SCALAR_FIELD) revert InvalidNoteNPK();
 
     // ERC721 notes should have a value of 1
-    if (_note.token.tokenType == TokenType.ERC721 && _note.value != 1)
-      return (false, "Invalid NFT Note Value");
-
-    return (true, "");
+    if (_note.token.tokenType == TokenType.ERC721 && _note.value != 1) revert InvalidNFTNoteValue();
   }
 
   /**
@@ -292,7 +311,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
       uint256 balanceAfter = token.balanceOf(address(this));
 
       // Check ERC20 tokens transferred
-      require(balanceAfter - balanceBefore == base, "RailgunLogic: ERC20 transfer failed");
+      if (balanceAfter - balanceBefore != base) revert ERC20TransferFailed();
 
       // Transfer fee to treasury
       token.safeTransferFrom(address(msg.sender), treasury, fee);
@@ -315,13 +334,10 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
       token.transferFrom(address(msg.sender), address(this), _note.token.tokenSubID);
 
       // Check ERC721 transferred
-      require(
-        token.ownerOf(_note.token.tokenSubID) == address(this),
-        "RailgunLogic: ERC721 didn't transfer"
-      );
+      if (token.ownerOf(_note.token.tokenSubID) != address(this)) revert ERC721TransferFailed();
     } else {
       // ERC1155 token
-      revert("RailgunLogic: ERC1155 not yet supported");
+      revert ERC1155NotSupported();
     }
 
     return (adjustedNote, treasuryFee);
@@ -371,7 +387,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
       emit Unshield(address(uint160(uint256(_note.npk))), _note.token, 1, 0);
     } else {
       // ERC1155 token
-      revert("RailgunLogic: ERC1155 not yet supported");
+      revert ERC1155NotSupported();
     }
   }
 
@@ -396,7 +412,7 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
       result := sload(hash)
     }
 
-    require(result, "RailgunLogic: Unsafe vectors");
+    if (!result) revert UnsafeVectors();
   }
 
   /**
@@ -434,33 +450,32 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
   /**
    * @notice Verifies transaction validity
-   * @return valid, reason
    */
   function validateTransaction(
     Transaction calldata _transaction
-  ) public view returns (bool, string memory) {
+  ) public view {
     // Gas price of eth transaction should be equal or greater than railgun transaction specified min gas price
     // This will only work correctly for type 0 transactions, set to 0 for EIP-1559 transactions
-    if (tx.gasprice < _transaction.boundParams.minGasPrice) return (false, "Gas price too low");
+    if (tx.gasprice < _transaction.boundParams.minGasPrice) revert GasPriceTooLow();
 
     // Adapt contract must either equal 0 or msg.sender
     if (
       _transaction.boundParams.adaptContract != address(0) &&
       _transaction.boundParams.adaptContract != msg.sender
-    ) return (false, "Invalid Adapt Contract as Sender");
+    ) revert InvalidAdaptContract();
 
     // ChainID should match the current EVM chainID
-    if (_transaction.boundParams.chainID != block.chainid) return (false, "ChainID mismatch");
+    if (_transaction.boundParams.chainID != block.chainid) revert ChainIDMismatch();
 
     // Merkle root must be a seen historical root
-    if (!Commitments.isKnownRoot(_transaction.merkleRoot, _transaction.rootIndex))
-      return (false, "Invalid Merkle Root");
+    if (!Commitments.isKnownRoot(_transaction.boundParams.treeNumber, _transaction.merkleRoot, _transaction.rootIndex))
+      revert InvalidMerkleRoot();
 
     if (_transaction.boundParams.unshield != UnshieldType.NONE) {
       // Ensure ciphertext length matches the commitments length (minus 1 for unshield output)
       if (
         _transaction.boundParams.commitmentCiphertext.length != _transaction.commitments.length - 1
-      ) return (false, "Invalid Note Ciphertext Array Length");
+      ) revert InvalidCiphertextLength();
 
       // Check unshield preimage hash is correct
       bytes32 hash;
@@ -480,17 +495,15 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
 
       // Check hash equals the last commitment in array
       if (hash != _transaction.commitments[_transaction.commitments.length - 1])
-        return (false, "Invalid Withdraw Note");
+        revert InvalidWithdrawNote();
     } else {
       // Ensure ciphertext length matches the commitments length
       if (_transaction.boundParams.commitmentCiphertext.length != _transaction.commitments.length)
-        return (false, "Invalid Note Ciphertext Array Length");
+        revert InvalidCiphertextLength();
     }
 
     // Verify SNARK proof
-    if (!Verifier.verify(_transaction)) return (false, "Invalid Snark Proof");
-
-    return (true, "");
+    if (!Verifier.verify(_transaction)) revert InvalidSnarkProof();
   }
 
   /**
@@ -514,17 +527,20 @@ contract RailgunLogic is Initializable, OwnableUpgradeable, Commitments, TokenBl
       nullifierIter += 1
     ) {
       // If nullifier has been seen before revert
-      require(
-        !Commitments.nullifiers[_transaction.nullifiers[nullifierIter]],
-        "RailgunLogic: Note already spent"
-      );
+      if (
+        Commitments.nullifiers[_transaction.boundParams.treeNumber][
+          _transaction.nullifiers[nullifierIter]
+        ]
+      ) revert NoteAlreadySpent();
 
       // Set nullifier to seen
-      Commitments.nullifiers[_transaction.nullifiers[nullifierIter]] = true;
+      Commitments.nullifiers[_transaction.boundParams.treeNumber][
+        _transaction.nullifiers[nullifierIter]
+      ] = true;
     }
 
     // Emit nullifier event
-    emit Nullified(_transaction.nullifiers);
+    emit Nullified(_transaction.boundParams.treeNumber, _transaction.nullifiers);
 
     // Loop through each commitment
     for (

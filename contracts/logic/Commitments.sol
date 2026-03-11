@@ -13,11 +13,13 @@ import { PoseidonT3 } from "./Poseidon.sol";
 /**
  * @title Commitments
  * @author Railgun Contributors
- * @notice Batch Incremental Merkle Tree for commitments
+ * @notice Batch Incremental Merkle Tree for commitments (Multi-tree with sliding window)
  * @dev Publicly accessible functions to be put in RailgunLogic
  * Relevant external contract calls should be in those functions, not here
  * 
- * Root history: Sliding window of 600 roots
+ * Root history design:
+ * - Active tree: Sliding window of ROOT_HISTORY_SIZE roots
+ * - Finalized trees: Only store the final root (space efficient)
  */
 contract Commitments is Initializable {
   // NOTE: The order of instantiation MUST stay the same across upgrades
@@ -25,22 +27,29 @@ contract Commitments is Initializable {
   // variable at the end of this file
   // See https://docs.openzeppelin.com/learn/upgrading-smart-contracts#upgrading
 
-  // Commitment nullifiers (nullifier -> seen)
-  mapping(bytes32 => bool) public nullifiers;
+  // Commitment nullifiers (treeNumber -> nullifier -> seen)
+  mapping(uint256 => mapping(bytes32 => bool)) public nullifiers;
 
-  // The tree depth (16 levels = 2^16 = 65,536 UTXOs)
-  uint256 internal constant TREE_DEPTH = 16;
+  // The tree depth (24 levels = 2^24 = 16,777,216 UTXOs per tree)
+  uint256 internal constant TREE_DEPTH = 24;
 
   // Tree zero value
   bytes32 public constant ZERO_VALUE = bytes32(uint256(keccak256("Railgun")) % SNARK_SCALAR_FIELD);
 
-  // Next leaf index (number of inserted leaves in the tree)
+  // Next leaf index (number of inserted leaves in the current tree)
   uint256 public nextLeafIndex;
 
-  // The Merkle root
+  // The Merkle root of current active tree
   bytes32 public merkleRoot;
 
-  bool public isRootUpdated = false;
+  // Whether the root has been updated after addLeaves
+  bool public isRootUpdated;
+
+  // Current tree number
+  uint256 public treeNumber;
+
+  // Store new tree root to quickly migrate to a new tree
+  bytes32 private newTreeRoot;
 
   // The Merkle path to the leftmost leaf upon initialization. It *should
   // not* be modified after it has been set by the initialize function.
@@ -51,15 +60,18 @@ contract Commitments is Initializable {
   // Used for efficient updates of the merkle tree
   bytes32[TREE_DEPTH] private filledSubTrees;
 
-  // ============ Root History (Sliding Window) ============
-  // Maximum number of roots to keep in history (sliding window)
-  uint32 public constant ROOT_HISTORY_SIZE = 600;
+  // ============ Root History (Hybrid Design) ============
+  // Maximum number of roots to keep in history for active tree (sliding window)
+  uint32 public constant ROOT_HISTORY_SIZE = 100;
 
-  // Current root index in the sliding window
+  // Current root index in the sliding window (for active tree)
   uint32 public currentRootIndex;
 
-  // Root history: index -> root mapping
-  mapping(uint32 => bytes32) public roots;
+  // Active tree root history: index -> root (sliding window)
+  mapping(uint32 => bytes32) public activeTreeRoots;
+
+  // Finalized trees: treeNumber -> final root (only store the last root)
+  mapping(uint256 => bytes32) public finalizedTreeRoots;
 
   /**
    * @notice Calculates initial values for Merkle Tree
@@ -98,10 +110,11 @@ contract Commitments is Initializable {
       currentZero = hashLeftRight(currentZero, currentZero);
     }
 
-    // Set merkle root and add to history
-    merkleRoot = currentZero;
-    roots[0] = currentZero;
+    // Set merkle root and store root to quickly retrieve later
+    newTreeRoot = merkleRoot = currentZero;
+    activeTreeRoots[0] = currentZero;
     currentRootIndex = 0;
+    isRootUpdated = true;
   }
 
   /**
@@ -148,11 +161,11 @@ contract Commitments is Initializable {
       return;
     }
 
-    // Check if tree can contain new leaves (32 levels = 2^32 capacity)
-    require(
-      (nextLeafIndex + count) <= (2 ** TREE_DEPTH),
-      "Commitments: Tree capacity exceeded"
-    );
+    // Create new tree if current one can't contain new leaves
+    // We insert all new commitment into a new tree to ensure they can be spent in the same transaction
+    if ((nextLeafIndex + count) > (2 ** TREE_DEPTH)) {
+      newTree();
+    }
 
     // Current index is the index at each level to insert the hash
     uint256 levelInsertionIndex = nextLeafIndex;
@@ -242,11 +255,10 @@ contract Commitments is Initializable {
       return;
     }
 
-    // Single tree: require capacity (no newTree in sliding-window implementation)
-    require(
-      (nextLeafIndex + count) <= (2 ** TREE_DEPTH),
-      "Commitments: Tree capacity exceeded"
-    );
+    // Create new tree if current one can't contain new leaves
+    if ((nextLeafIndex + count) > (2 ** TREE_DEPTH)) {
+      newTree();
+    }
 
     // Update filledSubTrees at each level (similar to Polygon's _branch update)
     for (uint256 height = 0; height < TREE_DEPTH; height++) {
@@ -284,10 +296,10 @@ contract Commitments is Initializable {
   }
 
   /**
-* @notice Calculate and update root from filledSubTrees (similar to Polygon's getRoot)
-* @dev Uses filledSubTrees and nextLeafIndex to calculate root, no need for leaf hashes
-* This is similar to Polygon's getRoot() which calculates root from _branch and depositCount
-*/
+   * @notice Calculate and update root from filledSubTrees (similar to Polygon's getRoot)
+   * @dev Uses filledSubTrees and nextLeafIndex to calculate root, no need for leaf hashes
+   * This is similar to Polygon's getRoot() which calculates root from _branch and depositCount
+   */
   function updateRoot() public {
     if (isRootUpdated) {
       return;
@@ -325,47 +337,114 @@ contract Commitments is Initializable {
     return node;
   }
 
+  /**
+   * @notice Creates new merkle tree
+   * @dev Called when current tree is full. Saves final root to finalizedTreeRoots.
+   */
+  function newTree() internal {
+    // If root hasn't been updated (lazy update pending), calculate the actual root
+    // Otherwise use the stored merkleRoot
+    bytes32 finalRoot = isRootUpdated ? merkleRoot : getRoot();
+    
+    // Save the final root of the current tree to finalized storage
+    finalizedTreeRoots[treeNumber] = finalRoot;
+
+    // Restore merkleRoot to newTreeRoot (empty tree root)
+    merkleRoot = newTreeRoot;
+
+    // Existing values in filledSubtrees will never be used so overwriting them is unnecessary
+
+    // Reset next leaf index to 0
+    nextLeafIndex = 0;
+
+    // Reset sliding window for new tree
+    currentRootIndex = 0;
+    activeTreeRoots[0] = newTreeRoot;
+
+    // Increment tree number
+    treeNumber += 1;
+
+    // Mark root as updated (new tree starts fresh)
+    isRootUpdated = true;
+  }
 
   /**
-   * @notice Add root to history using sliding window
+   * @notice Add root to history using sliding window (for active tree only)
    * @param _root - Merkle root to add
    * @dev Uses (currentRootIndex + 1) % ROOT_HISTORY_SIZE to roll over and overwrite old roots
    */
   function _addRootToHistory(bytes32 _root) internal {
     currentRootIndex = (currentRootIndex + 1) % ROOT_HISTORY_SIZE;
-    roots[currentRootIndex] = _root;
+    activeTreeRoots[currentRootIndex] = _root;
   }
 
   /**
-   * @notice Check if a root exists in history
+   * @notice Check if a root exists at specific index (for transaction verification, O(1))
+   * @param _treeNumber - Tree number
    * @param _root - Merkle root to check
-   * @param _rootIndex - Root index for O(1) lookup (0-599)
-   * @return exists - Whether the root exists at the given index
-   * @dev Performs O(1) lookup. Allows using any historical root.
-   *      If roots[_rootIndex] == _root, the root exists (even if later overwritten).
+   * @param _rootIndex - Root index for O(1) lookup (0-99 for active tree)
+   * @return exists - Whether the root exists
+   * @dev O(1) lookup. For finalized trees, _rootIndex is ignored.
    */
-  function isKnownRoot(bytes32 _root, uint32 _rootIndex) public view returns (bool) {
-    if (_root == bytes32(0)) {
-      return false;
+  function isKnownRoot(
+    uint256 _treeNumber,
+    bytes32 _root, 
+    uint32 _rootIndex
+  ) public view returns (bool) {
+    if (_root == bytes32(0)) return false;
+    
+    if (_treeNumber < treeNumber) {
+      // Finalized tree: only check final root (_rootIndex ignored)
+      return finalizedTreeRoots[_treeNumber] == _root;
+    } else if (_treeNumber == treeNumber) {
+      // Active tree: O(1) direct lookup
+      return activeTreeRoots[_rootIndex] == _root;
     }
-
-    // Direct lookup: if roots[_rootIndex] matches _root, the root exists
-    // This allows using any historical root, even if the slot was later overwritten
-    return roots[_rootIndex] == _root;
+    return false;
   }
 
   /**
-   * @notice Get the starting index for new commitments
-   * @param _newCommitments - number of new commitments to be inserted
-   * @return startingIndex - The starting leaf index for new commitments
-   * @dev Returns the current nextLeafIndex. Will revert if tree capacity is exceeded.
+   * @notice Find if a root exists and return its index (for external read-only queries)
+   * @param _treeNumber - Tree number
+   * @param _root - Merkle root to find
+   * @return exists - Whether the root was found
+   * @return rootIndex - The index if found (0 for finalized trees, valid index for active tree)
+   * @dev For finalized trees: O(1). For active tree: O(ROOT_HISTORY_SIZE) scan.
    */
-  function getStartingIndex(uint256 _newCommitments) public view returns (uint256) {
-    require(
-      (nextLeafIndex + _newCommitments) <= (2 ** TREE_DEPTH),
-      "Commitments: Tree capacity exceeded"
-    );
-    return nextLeafIndex;
+  function findRoot(
+    uint256 _treeNumber,
+    bytes32 _root
+  ) public view returns (bool exists, uint32 rootIndex) {
+    if (_root == bytes32(0)) return (false, 0);
+    
+    if (_treeNumber < treeNumber) {
+      // Finalized tree: O(1) check final root, index is meaningless so return 0
+      return (finalizedTreeRoots[_treeNumber] == _root, 0);
+    } else if (_treeNumber == treeNumber) {
+      // Active tree: scan sliding window to find index
+      for (uint32 i = 0; i < ROOT_HISTORY_SIZE; i++) {
+        if (activeTreeRoots[i] == _root) {
+          return (true, i);
+        }
+      }
+    }
+    return (false, 0);
+  }
+
+  /**
+   * @notice Gets tree number that new commitments will get inserted to
+   * @param _newCommitments - number of new commitments
+   * @return treeNum - Tree number for insertion
+   * @return startingIndex - Starting leaf index
+   */
+  function getInsertionTreeNumberAndStartingIndex(
+    uint256 _newCommitments
+  ) public view returns (uint256, uint256) {
+    // New tree will be created if current one can't contain new leaves
+    if ((nextLeafIndex + _newCommitments) > (2 ** TREE_DEPTH)) return (treeNumber + 1, 0);
+
+    // Else return current state
+    return (treeNumber, nextLeafIndex);
   }
 
   /**
